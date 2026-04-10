@@ -1,0 +1,31 @@
+# Secrets / local environment
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated deliverables
+output/*
+!output/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

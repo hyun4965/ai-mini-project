@@ -1,0 +1,25 @@
+[project]
+name = "mini-project-tech-strategy"
+version = "0.1.0"
+description = "LangGraph-based technology strategy analysis workflow for R&D decision support."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=1.0.2",
+    "langchain-community>=0.3.31",
+    "langchain-openai>=1.0.1",
+    "langchain-tavily>=0.2.12",
+    "langgraph>=1.0.1",
+    "matplotlib>=3.10.7",
+    "pypdf>=6.0.0",
+    "python-dotenv>=1.2.1",
+    "scikit-learn>=1.7.2",
+    "sentence-transformers>=5.1.1",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
