@@ -2,7 +2,7 @@
 
 ## Abstract
 
-Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from competitor evidence, estimates TRL and threat, and generates a PDF report for R&D prioritization.
+HBM4, PIM, CXL 기술에 대해 경쟁사 공개 근거를 수집하고, TRL 기반 기술 성숙도와 Threat 수준을 평가해 SK hynix의 R&D 우선순위를 제안하는 LangGraph 기반 기술 전략 분석 workflow입니다.
 
 ## Overview
 
@@ -39,16 +39,6 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 | Output | Markdown, PDF (`reportlab` renderer) |
 
 ## Retrieval Evaluation
-
-Reference:
-
-- [`10-Retriever-Evaluation.ipynb`](/Users/hyun/workspace/ai_mini/langchain-v1/14-Retriever/10-Retriever-Evaluation.ipynb)
-
-Evaluation script in this project:
-
-```bash
-/Users/hyun/workspace/ai_mini/langgraph-v1/.venv/bin/python -m tech_strategy.retrieval_eval
-```
 
 Current measured metrics (`data/eval/retrieval_eval.sample.json`, sample set size = 4):
 
