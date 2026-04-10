@@ -469,7 +469,7 @@ class WebSearchService:
                 item.get("source", ""),
             )
 
-        cap_per_stance = max(self.config.min_web_results, 8)
+        cap_per_stance = max(self.config.min_web_results, 6)
         supportive = sorted(
             [item for item in results if item.get("stance") != "counter"],
             key=sort_key,
