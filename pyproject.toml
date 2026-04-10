@@ -11,9 +11,9 @@ dependencies = [
     "langchain-tavily>=0.2.12",
     "langgraph>=1.0.1",
     "faiss-cpu>=1.13.0",
-    "matplotlib>=3.10.7",
     "pypdf>=6.0.0",
     "python-dotenv>=1.2.1",
+    "reportlab>=4.4.10",
     "scikit-learn>=1.7.2",
     "sentence-transformers>=5.1.1",
 ]
