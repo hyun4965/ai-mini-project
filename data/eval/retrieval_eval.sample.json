@@ -1,7 +1,22 @@
 [
   {
-    "question": "HBM4 경쟁사 양산 준비 수준을 보여주는 근거는 무엇인가?",
+    "question": "HBM4 integration in AI/HPC chiplet architectures의 핵심 주제를 설명하는 근거는 무엇인가?",
+    "answer_source_contains": "HBM4 Integration In AI/HPC Chiplet Architectures",
+    "notes": "HBM PDF title match"
+  },
+  {
+    "question": "Processing-in-Memory 기술 개요를 설명하는 primer 문서는 무엇인가?",
+    "answer_source_contains": "Processing-In-Memory",
+    "notes": "PIM PDF title match"
+  },
+  {
+    "question": "Compute Express Link 인터커넥트 입문 자료는 무엇인가?",
+    "answer_source_contains": "Compute Express Link",
+    "notes": "CXL PDF title match"
+  },
+  {
+    "question": "HBM4 경쟁사 로드맵과 기술 성숙도 비교에 관련된 문서는 무엇인가?",
     "answer_source_contains": "HBM4",
-    "notes": "Replace with a real ground-truth snippet after building the corpus."
+    "notes": "HBM-related semantic match"
   }
 ]
