@@ -210,8 +210,8 @@ mini_project/
 
 ## Generated Artifacts
 
-- [Final report PDF](output/ai-mini_output_3반_배석현+박나연.pdf)
-- [Final report Markdown](output/ai-mini_output_3반_배석현+박나연.md)
+- [Final report PDF](output/ai-mini_output_3반_배석현+박나연_project.pdf)
+- [Final report Markdown](output/ai-mini_output_3반_배석현+박나연_project.md)
 
 ## Contributors
 

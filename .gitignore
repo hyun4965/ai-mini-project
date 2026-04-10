@@ -26,6 +26,8 @@ output/*
 !output/.gitkeep
 !output/ai-mini_output_3반_배석현+박나연.md
 !output/ai-mini_output_3반_배석현+박나연.pdf
+!output/ai-mini_output_3반_배석현+박나연_project.md
+!output/ai-mini_output_3반_배석현+박나연_project.pdf
 
 # OS / editor
 .DS_Store
