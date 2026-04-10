@@ -12,48 +12,20 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 
 ## Features
 
-- PDF / TXT / Markdown 자료 기반 기본 지식 검색
-- 최신 뉴스 / 발표 / 반증 자료를 포함하는 Web Search
-- 최근 1~2년 자료 우선, 최소 2개 이상 출처, 출처 신뢰도 점수를 반영하는 Web Search
-- 직접 근거와 간접 지표를 구분하는 Evidence Synthesis
-- 기준 기업(`SK hynix`)과 비교 대상 경쟁사를 상태상에서 분리해 self-row가 Decision 평균에 섞이지 않도록 처리
-- TRL(1~9) 기반 기술 성숙도 평가
-- Threat(High / Medium / Low) 기반 경쟁 위협 평가
-- Go / Hold / Monitor + Priority(High / Medium / Low) 의사결정
-- Draft -> Supervisor 검증 -> Formatting Node 순서를 지키는 보고서 생성
-- 재검색은 동일 query 반복이 아니라, 실패 원인에 따라 query를 재구성하여 수행
-- Retrieval / Web Search Agent는 내부에서 실패 원인을 진단하고 query를 재작성
-- 확증 편향 방지 전략 :
-  - positive query와 counter-evidence query를 함께 생성
-  - source diversity와 bias risk score를 함께 측정
-  - official / standards / academic / reputable media / general web 기준으로 출처 신뢰도를 점수화
-  - 반증 자료가 없으면 Web Search Agent가 counter query를 확장하고 Supervisor가 재실행을 승인
-  - 편향 완화를 위해 반증 query를 별도로 확장
-- Query rewrite 전략 :
-  - 관련성 부족 시 기술 세부 키워드와 문서 유형 키워드를 추가
-  - 최신성 부족 시 최근 연도 / 발표 / 보도자료 키워드를 강화
-  - 출처 다양성 부족 시 공식 발표 / 뉴스 / 학회 발표 쿼리를 분리
-- TRL 4~6 추정 한계 명시 :
-  - 보고서에 공개 정보 기반 추정임을 명시
-  - TRL 4 이상은 내부 문서, 통합 검증 기록, 공정/수율 데이터, 고객 샘플 검증 자료 없이는 정확 판정이 어렵다는 점을 보고서에 명시
-  - 특허 / 학회 발표 / 채용 공고와 같은 간접 지표를 함께 근거로 사용
-- Decision 제어 :
-  - Assessment가 충분하지 않으면 Decision을 보류
-  - Decision rationale이 TRL / Threat / Evidence / Competitor와 연결되지 않으면 Assessment로 재귀
-  - Decision 형식 누락은 Decision 단계 재실행, 근거 부족은 Assessment 단계 재실행으로 분리
-- Draft 제어 :
-  - Draft는 초안 생성만 수행하고 직접 종료하지 않음
-  - 필수 섹션, Decision 반영, 근거 연결, TRL 4~6 한계 문구를 Supervisor가 검증
-  - 초안이 bullet 위주 나열형이면 분석형 fallback 초안으로 재생성
-- Formatting 제어 :
-  - Formatting Node는 PDF 생성만 수행
-  - 생성 후 PDF 텍스트 추출 기반으로 섹션 순서와 내용 손실 여부를 검증
-  - 검증 실패 시 Formatting 실패로 처리되어 Supervisor가 재시도 또는 오류 종료를 결정
-- 운영 안정성 강화 :
-  - `TechStrategyError` 계층의 custom exception으로 LLM / Web Search / Formatting / Timeout 오류를 구분
-  - Tavily / OpenAI 호출은 exponential backoff retry 정책을 적용
-  - 외부 API와 전체 workflow 실행에 timeout을 둬 무한 대기를 방지
-  - 각 node 시작 / 종료 / 재시도 / fallback 이유를 `logging`으로 기록
+| Feature | Description |
+|---|---|
+| Local Retrieval | PDF / TXT / Markdown 자료를 기반으로 기본 지식과 기술 배경을 검색한다. |
+| Web Search | 최신 뉴스, 공식 발표, 반증 자료를 함께 수집하고 출처 신뢰도와 최신성을 점수화한다. |
+| Evidence Synthesis | 직접 근거와 특허, 채용, 투자, 생태계 활동 같은 간접 지표를 구분해 정리한다. |
+| Competitor Scope | 기준 기업 `SK hynix`와 비교 대상 경쟁사를 상태상에서 분리해 self-row가 Decision 평균에 섞이지 않도록 처리한다. |
+| TRL Assessment | TRL 1~9 기준으로 기술 성숙도를 평가하고, TRL 4~6은 공개 정보 기반 추정 한계를 명시한다. |
+| Threat Assessment | 기술 성숙도, 시장 영향력, 경쟁 강도를 반영해 High / Medium / Low 위협 수준을 산정한다. |
+| Decision | Go / Hold / Monitor 권고와 High / Medium / Low 우선순위를 생성한다. |
+| Query Rewrite | 실패 원인에 따라 기술 세부 키워드, 최신성 키워드, 출처 다양성 키워드를 보강해 재검색한다. |
+| Bias Control | positive query와 counter-evidence query를 함께 생성하고 source diversity, bias risk score를 검증한다. |
+| Draft Control | Draft가 직접 종료하지 않고 Supervisor 검증을 거치며, 나열형 초안은 분석형 fallback 초안으로 대체한다. |
+| Formatting | Markdown을 PDF로 변환하고 텍스트 추출 기반으로 섹션 순서와 내용 손실 여부를 검증한다. |
+| Runtime Safety | Custom exception, retry, timeout, logging으로 외부 API 오류와 장시간 실행을 제어한다. |
 
 ## Tech Stack
 
@@ -66,54 +38,7 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 | Search | Tavily |
 | Output | Markdown, PDF (`reportlab` renderer) |
 
-## Retrieval Design
-
-### Embedding Candidates
-
-- `intfloat/multilingual-e5-large`
-- `BAAI/bge-m3`
-- `sentence-transformers/paraphrase-multilingual-mpnet-base-v2`
-
-Selection criteria:
-
-- 한국어/영어 혼합 기술 문서 처리 성능
-- 기술명, 기업명, 표준명 exact term 보존력
-- 긴 PDF chunk semantic 검색 성능
-- CPU 환경 실행 가능성
-- 오픈소스 사용 가능성
-
-Final choice:
-
-- `intfloat/multilingual-e5-large`
-
-### Retrieval Technique Candidates
-
-- Dense similarity
-- BM25 / lexical retrieval
-- Hybrid retrieval
-- MMR
-- MultiQuery
-- Parent document retrieval
-
-Selection criteria:
-
-- Hit Rate@K
-- MRR
-- 기술 키워드 exact match 성능
-- semantic relevance
-- 중복 억제 성능
-- 운영 복잡도
-
-Final choice:
-
-- Hybrid Dense + Lexical
-- Runtime note:
-  - 기본 설정은 FAISS vector store를 `output/vector_store/`에 저장해 다음 실행부터 문서 임베딩을 재사용한다.
-  - 빠른 로컬 테스트는 `TS_EMBEDDING_BACKEND=hashing`을 사용할 수 있고, 의미 기반 검색 품질을 우선하면 `auto` 또는 `huggingface`를 사용한다.
-  - 임베딩 모델을 초기화할 수 없거나 로컬 캐시가 없으면 lexical fallback으로 동작한다.
-  - 따라서 `relevance_score`는 실행 시점에 dense-first hybrid 점수일 수도 있고 lexical fallback 점수일 수도 있다.
-
-### Retrieval Evaluation
+## Retrieval Evaluation
 
 Reference:
 
