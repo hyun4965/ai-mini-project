@@ -76,6 +76,7 @@ class StrategyConfig:
     retrieval_top_k: int = field(default_factory=lambda: int(os.getenv("TS_RETRIEVAL_TOP_K", "8")))
     retrieval_score_threshold: float = field(default_factory=lambda: float(os.getenv("TS_RETRIEVAL_SCORE_THRESHOLD", "0.8")))
     tavily_max_results: int = field(default_factory=lambda: int(os.getenv("TS_TAVILY_MAX_RESULTS", "5")))
+    max_web_queries: int = field(default_factory=lambda: int(os.getenv("TS_MAX_WEB_QUERIES", "6")))
     min_retrieved_docs: int = field(default_factory=lambda: int(os.getenv("TS_MIN_RETRIEVED_DOCS", "4")))
     min_web_results: int = field(default_factory=lambda: int(os.getenv("TS_MIN_WEB_RESULTS", "6")))
     min_source_diversity: int = field(default_factory=lambda: int(os.getenv("TS_MIN_SOURCE_DIVERSITY", "2")))

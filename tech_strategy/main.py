@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--team-label",
         default=None,
-        help="Deliverable label, for example 3반_김철수+최영희+박민수+이서연",
+        help="Deliverable label, for example 3반_배석현_박나연",
     )
     return parser.parse_args()
 

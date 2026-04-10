@@ -677,7 +677,7 @@ class TechStrategyWorkflow:
                 sources = evidence.get("sources", [])
                 total_evidence = len(direct) + len(indirect)
 
-                if total_evidence < 2 or not sources:
+                if total_evidence < 1 or not sources:
                     return (
                         False,
                         "insufficient_evidence",

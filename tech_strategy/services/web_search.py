@@ -47,6 +47,7 @@ class WebSearchService:
         current_plan = dict(state["query_plan"])
         base_queries, counter_queries = self._build_balanced_web_queries(current_plan, state)
         all_queries = base_queries + counter_queries
+        search_errors: list[str] = []
 
         if self.search_tool is None:
             attempt = state["web_search"].get("attempt", 0) + 1
@@ -75,7 +76,7 @@ class WebSearchService:
         results: list[dict[str, Any]] = []
         for query in all_queries:
             stance = "counter" if query in counter_queries else "supportive"
-            for item in self._search_web(query, stance):
+            for item in self._search_web(query, stance, search_errors):
                 results.append(item)
 
         results = self._dedupe_records(
@@ -129,6 +130,8 @@ class WebSearchService:
                 bias_risk_score=bias_risk_score,
                 balanced_company_coverage=balanced_company_coverage,
             )
+            if not results and search_errors:
+                failure_reason = "web_search_api_error"
             current_plan["web_queries"] = self._rewrite_web_queries(
                 interpretation=current_plan,
                 reason=failure_reason,
@@ -166,7 +169,8 @@ class WebSearchService:
             "analysis_log": [
                 f"[web_search] queries={len(all_queries)} results={len(results)} sources={source_diversity} "
                 f"recent={freshness_score:.2f} reliability={source_reliability_score:.2f} "
-                f"bias={bias_risk_score:.2f} counter={has_counter_evidence} balanced={balanced_company_coverage}"
+                f"bias={bias_risk_score:.2f} counter={has_counter_evidence} balanced={balanced_company_coverage} "
+                f"errors={len(search_errors)} reason={failure_reason or 'ok'}"
             ],
         }
 
@@ -196,6 +200,10 @@ class WebSearchService:
 
         positive_queries = self._dedupe_strings(planned_web + balanced_positive)
         counter_queries = self._dedupe_strings(planned_counter + balanced_counter)
+        positive_limit = max(1, self.config.max_web_queries // 2)
+        counter_limit = max(1, self.config.max_web_queries - positive_limit)
+        positive_queries = positive_queries[:positive_limit]
+        counter_queries = counter_queries[:counter_limit]
         return positive_queries, counter_queries
 
     def _detect_web_search_failure_reason(
@@ -297,13 +305,18 @@ class WebSearchService:
 
         return self._dedupe_strings(existing + rewritten)
 
-    def _search_web(self, query: str, stance: str) -> list[dict[str, Any]]:
+    def _search_web(self, query: str, stance: str, errors: list[str]) -> list[dict[str, Any]]:
         """Tavily를 호출하고 원본 검색 결과를 워크플로우 레코드로 정규화한다."""
         if self.search_tool is None:
             return []
         try:
             raw = self.search_tool.invoke(query)
-        except Exception:
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {str(exc)[:200]}")
+            return []
+
+        if isinstance(raw, dict) and raw.get("error"):
+            errors.append(str(raw["error"])[:200])
             return []
 
         results = raw.get("results", raw if isinstance(raw, list) else [])
@@ -463,6 +476,7 @@ class WebSearchService:
             return []
 
         def sort_key(item: dict[str, Any]) -> tuple[int, float, str]:
+            """최근 결과와 신뢰도 높은 출처가 먼저 오도록 정렬 키를 만든다."""
             return (
                 0 if item.get("is_recent") else 1,
                 -float(item.get("source_reliability_score", 0.0)),
