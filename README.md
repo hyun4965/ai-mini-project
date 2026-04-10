@@ -174,62 +174,6 @@ flowchart TD
 - Logging:
   - `tech_strategy.*` 네임스페이스 로거로 supervisor 라우팅, node 시작/종료, retry 이유, fallback 발생 원인을 남긴다.
 
-## Environment Configuration
-
-Recommended `.env` strategy:
-
-- Secret keys:
-  - `OPENAI_API_KEY`, `TAVILY_API_KEY`, `LANGSMITH_API_KEY`만 실제 비밀값으로 관리한다.
-- Runtime controls:
-  - `TS_OPENAI_TIMEOUT_SECONDS`
-  - `TS_EXTERNAL_API_TIMEOUT_SECONDS`
-  - `TS_EXTERNAL_API_MAX_RETRIES`
-  - `TS_RETRY_BACKOFF_BASE_SECONDS`
-  - `TS_RETRY_BACKOFF_MAX_SECONDS`
-  - `TS_WORKFLOW_TIMEOUT_SECONDS`
-  - `TS_LOG_LEVEL`
-- Retrieval / search quality:
-  - `TS_ENABLE_DENSE_RETRIEVAL`
-  - `TS_ENABLE_VECTOR_STORE`
-  - `TS_RETRIEVAL_SCORE_THRESHOLD`
-  - `TS_MIN_RETRIEVED_DOCS`
-  - `TS_EMBEDDING_LOCAL_ONLY`
-  - `TS_TAVILY_MAX_RESULTS`
-  - `TS_MAX_WEB_QUERIES`
-  - `TS_MIN_WEB_RESULTS`
-  - `TS_MIN_SOURCE_DIVERSITY`
-  - `TS_MIN_RECENT_RATIO`
-  - `TS_MIN_SOURCE_RELIABILITY`
-  - `TS_MAX_BIAS_RISK`
-
-Recommended values:
-
-- Local debug / Tavily credit 절약:
-  - `TS_MAX_ITERATION=1`
-  - `TS_TAVILY_MAX_RESULTS=1`
-  - `TS_MAX_WEB_QUERIES=2`
-  - `TS_MIN_WEB_RESULTS=1`
-  - `TS_MIN_SOURCE_DIVERSITY=1`
-  - `TS_MIN_RECENT_RATIO=0.0`
-  - `TS_MIN_SOURCE_RELIABILITY=0.60`
-  - `TS_MAX_BIAS_RISK=1.0`
-  - `TS_RETRIEVAL_SCORE_THRESHOLD=0.45`
-  - `TS_MIN_RETRIEVED_DOCS=2`
-  - `TS_LOG_LEVEL=DEBUG`
-- Final deliverable run:
-  - `TS_MAX_ITERATION=5`
-  - `TS_TAVILY_MAX_RESULTS=3`
-  - `TS_TAVILY_SEARCH_DEPTH=basic`
-  - `TS_MAX_WEB_QUERIES=4`
-  - `TS_MIN_WEB_RESULTS=3`
-  - `TS_MIN_SOURCE_DIVERSITY=2`
-  - `TS_MIN_RECENT_RATIO=0.4~0.5`
-  - `TS_MIN_SOURCE_RELIABILITY=0.65~0.7`
-  - `TS_OPENAI_TIMEOUT_SECONDS=90`
-  - `TS_EXTERNAL_API_TIMEOUT_SECONDS=25`
-  - `TS_EXTERNAL_API_MAX_RETRIES=2`
-  - `TS_WORKFLOW_TIMEOUT_SECONDS=900`
-
 ## Report Structure
 
 - SUMMARY
@@ -263,41 +207,6 @@ mini_project/
 ├── pyproject.toml         # Python 프로젝트 설정
 └── README.md              # 프로젝트 설명 문서
 ```
-
-## Run
-
-Copy `.env.example` to `.env` and fill in `OPENAI_API_KEY`, `TAVILY_API_KEY`, and optionally `LANGSMITH_API_KEY`.
-For Tavily credit control during testing, keep `TS_TAVILY_MAX_RESULTS=1`, `TS_TAVILY_SEARCH_DEPTH=basic`, `TS_MAX_WEB_QUERIES=2`, `TS_MIN_WEB_RESULTS=1`, `TS_MIN_SOURCE_DIVERSITY=1`, and `TS_MAX_ITERATION=1`.
-For final-quality runs, raise those values after checking the remaining Tavily credits.
-Set `TS_LOG_LEVEL=DEBUG` while tuning retrieval/web search, then switch to `INFO` for final runs.
-
-Generate the design artifact:
-
-```bash
-/Users/hyun/workspace/ai_mini/langgraph-v1/.venv/bin/python -m tech_strategy.design_artifact \
-  --team-label "3반_배석현+박나연"
-```
-
-Generate the report template artifact:
-
-```bash
-/Users/hyun/workspace/ai_mini/langgraph-v1/.venv/bin/python -m tech_strategy.report_template \
-  --team-label "3반_배석현+박나연"
-```
-
-Run the workflow:
-
-```bash
-cd /Users/hyun/workspace/ai_mini/mini_project
-/Users/hyun/workspace/ai_mini/langgraph-v1/.venv/bin/python -m tech_strategy.main \
-  "HBM4, PIM, CXL 기준으로 Samsung, Micron 대비 SK hynix의 R&D 우선순위를 분석해줘" \
-  --team-label "3반_배석현+박나연"
-```
-
-Expected output files:
-
-- `output/ai-mini_design_3반_배석현+박나연.pdf`
-- `output/ai-mini_output_3반_배석현+박나연.pdf`
 
 ## Generated Artifacts
 
