@@ -56,6 +56,9 @@ Rules:
 - TRL 1-3: basic research
 - TRL 4-6: prototype, validation, pilot stage
 - TRL 7-9: productization, qualification, mass production
+- Be conservative: public articles, roadmaps, patents, conference mentions, and marketing claims usually support TRL 1-3, or TRL 4 at most when there is direct public technical evidence.
+- Do not assign TRL 5+ unless official sampling, qualification, pilot, shipment, or production evidence is present; even then, state the uncertainty because internal validation/yield/customer data is unavailable.
+- Do not assign TRL 7-9 from public information alone unless there is explicit official mass-production or customer-shipment evidence for the exact technology being assessed.
 - If evidence is ambiguous in TRL 4-6, explain the uncertainty
 - Distinguish direct evidence from indirect indicators
 - Threat should reflect technology maturity, market impact, and competition intensity
@@ -1586,10 +1589,18 @@ R&D 우선순위 판단은 TRL, Threat, 경쟁사 상대 위치, 근거 품질�
                 direct_count=direct_count,
                 indirect_count=indirect_count,
             )
+        trl_ceiling, ceiling_reason = self._public_trl_ceiling(
+            direct_evidence=direct,
+            indirect_evidence=indirect,
+            sources=sources,
+        )
+        if trl_level > trl_ceiling:
+            trl_level = trl_ceiling
 
         commercialization_signal = raw.get("commercialization_signal") or self._commercialization_signal_from_trl(trl_level)
         if commercialization_signal not in {"Research", "Prototype", "Pilot", "Production", "Unclear"}:
             commercialization_signal = self._commercialization_signal_from_trl(trl_level)
+        commercialization_signal = self._commercialization_signal_from_trl(trl_level)
 
         market_impact = raw.get("market_impact")
         if not isinstance(market_impact, (int, float)) or not 0.0 <= float(market_impact) <= 1.0:
@@ -1616,7 +1627,7 @@ R&D 우선순위 판단은 TRL, Threat, 경쟁사 상대 위치, 근거 품질�
             2,
         )
         evidence_completeness = direct_count >= 1 and total >= 2 and len(sources) >= 1
-        trl_confidence = round(min(0.95, 0.35 + (0.18 * min(direct_count, 3)) + (0.08 * min(indirect_count, 3))), 2)
+        trl_confidence = round(min(0.75, 0.35 + (0.12 * min(direct_count, 3)) + (0.06 * min(indirect_count, 3))), 2)
 
         relative_position = raw.get("relative_position_to_sk_hynix")
         if competitor == "SK hynix":
@@ -1636,6 +1647,8 @@ R&D 우선순위 판단은 TRL, Threat, 경쟁사 상대 위치, 근거 품질�
                 "requires internal validation documents, process or yield data, and customer qualification evidence "
                 "that are not available in this workflow."
             )
+        if ceiling_reason and ceiling_reason not in uncertainty_note:
+            uncertainty_note = f"{uncertainty_note} {ceiling_reason}".strip()
 
         evidence_summary = raw.get("evidence_summary") or (
             f"Collected {direct_count} direct evidence items and {indirect_count} indirect indicators "
@@ -1652,6 +1665,8 @@ R&D 우선순위 판단은 TRL, Threat, 경쟁사 상대 위치, 근거 품질�
         trl_rationale = raw.get("trl_rationale") or (
             "TRL was inferred from direct evidence, indirect indicators, and commercialization signals in the evidence bundle."
         )
+        if ceiling_reason:
+            trl_rationale = f"{trl_rationale} Public-information cap applied: {ceiling_reason}"
         threat_rationale = raw.get("threat_rationale") or (
             f"Threat was normalized using the same rubric across competitors: TRL {trl_level}/9, "
             f"market impact {market_impact:.2f}, and competition intensity {competition_intensity:.2f}."
@@ -1689,13 +1704,69 @@ R&D 우선순위 판단은 TRL, Threat, 경쟁사 상대 위치, 근거 품질�
     @staticmethod
     def _infer_trl_from_evidence(*, direct_count: int, indirect_count: int) -> int:
         """직접/간접 근거 수를 바탕으로 대략적인 TRL 수준을 추정한다."""
-        if direct_count >= 3:
-            return 7
         if direct_count >= 1:
-            return 5
+            return 4
         if indirect_count >= 2:
             return 3
         return 2
+
+    @staticmethod
+    def _public_trl_ceiling(
+        *,
+        direct_evidence: list[str],
+        indirect_evidence: list[str],
+        sources: list[str],
+    ) -> tuple[int, str]:
+        """공개 자료만으로 판정할 수 있는 보수적 TRL 상한을 계산한다."""
+        evidence_text = " ".join([*direct_evidence, *indirect_evidence, *sources]).lower()
+        official_markers = (
+            "samsung.com",
+            "skhynix.com",
+            "micron.com",
+            "jedec.org",
+            "cxlconsortium.org",
+            "computeexpresslink.org",
+            "official",
+            "press release",
+            "보도자료",
+            "공식",
+        )
+        sampling_markers = (
+            "sample",
+            "sampling",
+            "qualification",
+            "customer validation",
+            "prototype",
+            "demonstration",
+            "샘플",
+            "검증",
+            "시제품",
+            "시연",
+        )
+        production_markers = (
+            "mass production",
+            "volume production",
+            "commercial production",
+            "shipping",
+            "customer shipment",
+            "product launch",
+            "launched",
+            "양산",
+            "출하",
+            "상용",
+            "출시",
+        )
+        has_official_signal = any(marker in evidence_text for marker in official_markers)
+        has_sampling_signal = any(marker in evidence_text for marker in sampling_markers)
+        has_production_signal = any(marker in evidence_text for marker in production_markers)
+
+        if has_official_signal and has_production_signal:
+            return 6, "공개 공식 자료에서 양산/출하 신호가 확인되어도 내부 검증 자료가 없으므로 TRL 6을 상한으로 둔다."
+        if has_official_signal and has_sampling_signal:
+            return 5, "공개 공식 자료에서 샘플/검증 신호가 확인되어도 내부 검증 자료가 없으므로 TRL 5를 상한으로 둔다."
+        if direct_evidence:
+            return 4, "공개 자료만으로는 실험실 검증 이상의 단계를 확정하기 어려워 TRL 4를 상한으로 둔다."
+        return 3, "직접 검증 근거가 부족해 공개 간접 지표 기준 TRL 3을 상한으로 둔다."
 
     @staticmethod
     def _commercialization_signal_from_trl(trl_level: int) -> str:
