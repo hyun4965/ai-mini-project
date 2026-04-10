@@ -1,22 +1,74 @@
 [
   {
-    "question": "HBM4 integration in AI/HPC chiplet architectures의 핵심 주제를 설명하는 근거는 무엇인가?",
-    "answer_source_contains": "HBM4 Integration In AI/HPC Chiplet Architectures",
-    "notes": "HBM PDF title match"
+    "question": "CXL이 PCIe 기반 확장보다 낮은 지연과 메모리 의미론을 제공한다는 근거는 어디에 있는가?",
+    "answer_source_contains": "coherency and memory semantics",
+    "required_source_contains": "CXL 2.pdf",
+    "notes": "본문 근거 기반 CXL interconnect 평가"
   },
   {
-    "question": "Processing-in-Memory 기술 개요를 설명하는 primer 문서는 무엇인가?",
-    "answer_source_contains": "Processing-In-Memory",
-    "notes": "PIM PDF title match"
+    "question": "CXL이 데이터센터에서 서버 메모리 용량 확장과 다중 서버 자원 공유를 지원한다는 근거는 무엇인가?",
+    "answer_source_contains": "multi-server resource pooling",
+    "required_source_contains": "CXL 2.pdf",
+    "notes": "CXL use case 본문 근거"
   },
   {
-    "question": "Compute Express Link 인터커넥트 입문 자료는 무엇인가?",
-    "answer_source_contains": "Compute Express Link",
-    "notes": "CXL PDF title match"
+    "question": "CXL memory expander card를 Linux 커널 수정 없이 full-system으로 시뮬레이션한다는 근거는 어디에 있는가?",
+    "answer_source_contains": "unmodified Linux kernels",
+    "required_source_contains": "CXL3.pdf",
+    "notes": "CXL simulator 본문 근거"
   },
   {
-    "question": "HBM4 경쟁사 로드맵과 기술 성숙도 비교에 관련된 문서는 무엇인가?",
-    "answer_source_contains": "HBM4",
-    "notes": "HBM-related semantic match"
+    "question": "CXL memory pool이 RDMA보다 Engram 접근에 더 적합하다고 보는 근거는 무엇인가?",
+    "answer_source_contains": "fine-grained and low-latency access",
+    "required_source_contains": "CXL4.pdf",
+    "notes": "CXL memory pool 본문 근거"
+  },
+  {
+    "question": "HBM4와 chiplet processor 통합에서 어떤 패키징과 물리 계층 문제가 함께 발생하는가?",
+    "answer_source_contains": "package-level signal and power integrity",
+    "required_source_contains": "HBM 2.pdf",
+    "notes": "HBM4 chiplet integration 본문 근거"
+  },
+  {
+    "question": "HBM4 chiplet 통합에서 die-to-die interconnect와 열 관리를 함께 다룬다는 근거는 어디에 있는가?",
+    "answer_source_contains": "die-to-die interconnect design",
+    "required_source_contains": "HBM 2.pdf",
+    "notes": "HBM4 integration challenge 본문 근거"
+  },
+  {
+    "question": "UCIe 기반 on-package memory 접근이 기존 HBM4 대비 bandwidth density와 latency를 개선한다는 근거는 무엇인가?",
+    "answer_source_contains": "significantly higher bandwidth density",
+    "required_source_contains": "HBM3.pdf",
+    "notes": "HBM/UCIe 비교 본문 근거"
+  },
+  {
+    "question": "Transformer inference에서 병목이 연산량보다 데이터 이동과 interconnect bandwidth에 있다는 근거는 어디에 있는가?",
+    "answer_source_contains": "data movement and interconnect bandwidth",
+    "required_source_contains": "HBM5.pdf",
+    "notes": "Bandwidth wall 본문 근거"
+  },
+  {
+    "question": "PIM이 데이터 이동 비용과 에너지, 지연, 대역폭 문제를 줄이려는 기술이라는 근거는 무엇인가?",
+    "answer_source_contains": "data movement, especially off-chip to on-chip",
+    "required_source_contains": "PIM 2.pdf",
+    "notes": "PIM primer 본문 근거"
+  },
+  {
+    "question": "DRAM 기반 PIM이 전력 전달망에 비전통적 current demand 문제를 만든다는 근거는 어디에 있는가?",
+    "answer_source_contains": "power delivery network",
+    "required_source_contains": "PIM2.pdf",
+    "notes": "DRAM-PIM PDN 본문 근거"
+  },
+  {
+    "question": "Data gravity 논문에서 데이터 이동 에너지 불균형을 어떤 상수로 설명하는가?",
+    "answer_source_contains": "operation–operand disjunction constant",
+    "required_source_contains": "PIM3.pdf",
+    "notes": "PIM energy model 본문 근거"
+  },
+  {
+    "question": "DRAM-PIM에서 LUT가 arithmetic logic 없이 precomputed result를 매핑한다는 근거는 무엇인가?",
+    "answer_source_contains": "maps input operands to precomputed results",
+    "required_source_contains": "PIM5.pdf",
+    "notes": "LUT-based PIM inference 본문 근거"
   }
 ]

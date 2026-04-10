@@ -40,19 +40,21 @@ HBM4, PIM, CXL 기술에 대해 경쟁사 공개 근거를 수집하고, TRL 기
 
 ## Retrieval Evaluation
 
-Current measured metrics (`data/eval/retrieval_eval.sample.json`, sample set size = 4):
+Current measured metrics (`data/eval/retrieval_eval.sample.json`, sample set size = 12):
 
-- Hit@1 : `1.00`
-- Hit@3 : `1.00`
-- Hit@5 : `1.00`
-- MRR : `1.00`
+| Metric | Score |
+|--------|------:|
+| Hit Rate@1 | `0.3333` |
+| Hit Rate@3 | `0.6667` |
+| Hit Rate@5 | `0.8333` |
+| MRR | `0.5417` |
 
 Interpretation note:
 
-- 위 수치는 현재 저장소에 포함된 소규모 샘플 평가셋 기준이다.
-- 샘플 평가셋은 제목/핵심 키워드 매칭이 비교적 명확한 질의로 구성되어 있어 `Hit@1=1.00`, `MRR=1.00`이 나올 수 있다.
-- 따라서 이 수치는 현재 구현이 샘플 셋에서는 정답 문서를 안정적으로 찾았다는 의미이며, 일반적인 도메인 검색 성능 전체를 대표한다고 보기는 어렵다.
-- 실제 제출 시 corpus와 라벨셋이 확정되면 같은 스크립트로 재측정해 갱신할 수 있다.
+- `Hit Rate@K`와 `MRR`은 문서 제목 매칭이 아니라 본문 근거 문자열과 기대 PDF source를 함께 만족하는지 확인한다.
+- 진단 결과, 기대 PDF source 기준으로는 `Hit Rate@1=0.8333`, `Hit Rate@3=1.00`, `MRR=0.9167`이며, 낮아지는 부분은 주로 정확한 근거 chunk의 순위 문제다.
+- stale vector store 영향을 피하기 위해 기본 평가에서는 cached FAISS vector store를 사용하지 않는다.
+- 따라서 이 수치는 최종 선정한 hybrid dense/lexical retrieval이 엄격한 본문 근거 평가셋에서 정답 chunk를 얼마나 잘 찾는지 보여준다.
 
 ## Agents
 
@@ -200,6 +202,7 @@ mini_project/
 
 ## Generated Artifacts
 
+- [Design Document PDF](data/DesignDocument.pdf)
 - [Final report PDF](output/ai-mini_output_3반_배석현+박나연_project.pdf)
 - [Final report Markdown](output/ai-mini_output_3반_배석현+박나연_project.md)
 
