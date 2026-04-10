@@ -4,13 +4,16 @@ import argparse
 from pathlib import Path
 
 from .config import StrategyConfig, load_project_env
+from .errors import WorkflowExecutionTimeoutError
+from .logging_utils import configure_logging, get_logger
+from .resilience import run_with_timeout
 from .state import create_initial_state
 from .workflow import TechStrategyWorkflow
 
 
 def _print_failure_diagnostics(final_state: dict) -> None:
     """실패 시 각 단계의 실패 이유와 마지막 실행 로그를 사람이 읽기 쉽게 출력한다."""
-    if final_state["control"].get("status") == "success":
+    if final_state["control"].get("status") == "completed":
         return
 
     retrieval = final_state.get("retrieval", {})
@@ -38,11 +41,11 @@ def _print_failure_diagnostics(final_state: dict) -> None:
     )
     print(
         "- Downstream: "
-        f"assessment={assessment.get('status') or 'n/a'} "
+        f"assessment={assessment.get('is_complete') if 'is_complete' in assessment else 'n/a'} "
         f"({assessment.get('failure_reason') or 'n/a'}), "
-        f"decision={decision.get('status') or 'n/a'} "
+        f"decision={decision.get('is_valid') if 'is_valid' in decision else 'n/a'} "
         f"({decision.get('failure_reason') or 'n/a'}), "
-        f"draft={draft.get('status') or 'n/a'} "
+        f"draft={draft.get('is_valid') if 'is_valid' in draft else 'n/a'} "
         f"({draft.get('failure_reason') or 'n/a'})"
     )
 
@@ -79,6 +82,8 @@ def main() -> None:
     project_root = Path(args.project_root).resolve()
     env_path = load_project_env(project_root)
     config = StrategyConfig.from_project_root(project_root)
+    configure_logging(config.log_level)
+    logger = get_logger("main")
 
     if args.data_dir:
         config.data_dir = Path(args.data_dir).resolve()
@@ -91,9 +96,30 @@ def main() -> None:
     if args.team_label:
         config.deliverable_label = args.team_label
 
-    workflow = TechStrategyWorkflow(config).build()
     initial_state = create_initial_state(args.user_query, config.max_iteration)
-    final_state = workflow.invoke(initial_state)
+    workflow = TechStrategyWorkflow(config).build()
+
+    try:
+        final_state = run_with_timeout(
+            lambda: workflow.invoke(initial_state),
+            timeout_seconds=config.workflow_timeout_seconds,
+            timeout_error_factory=lambda seconds: WorkflowExecutionTimeoutError(seconds),
+        )
+    except WorkflowExecutionTimeoutError as exc:
+        logger.exception("workflow.timeout: %s", exc)
+        final_state = create_initial_state(args.user_query, config.max_iteration)
+        final_state["control"].update(
+            {
+                "status": "failed",
+                "workflow_stage": "main",
+                "coverage_status": "workflow_timeout",
+                "is_information_sufficient": False,
+                "next_step": "END",
+                "final_decision": "END",
+            }
+        )
+        final_state["output"]["format_error"] = str(exc)
+        final_state["analysis_log"] = [f"[main] workflow_timeout={exc}"]
 
     print(f"Loaded env: {env_path or 'not found'}")
     print(f"Status: {final_state['control']['status']}")

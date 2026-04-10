@@ -49,6 +49,11 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
   - Formatting Node는 PDF 생성만 수행
   - 생성 후 PDF 텍스트 추출 기반으로 섹션 순서와 내용 손실 여부를 검증
   - 검증 실패 시 Formatting 실패로 처리되어 Supervisor가 재시도 또는 오류 종료를 결정
+- 운영 안정성 강화 :
+  - `TechStrategyError` 계층의 custom exception으로 LLM / Web Search / Formatting / Timeout 오류를 구분
+  - Tavily / OpenAI 호출은 exponential backoff retry 정책을 적용
+  - 외부 API와 전체 workflow 실행에 timeout을 둬 무한 대기를 방지
+  - 각 node 시작 / 종료 / 재시도 / fallback 이유를 `logging`으로 기록
 
 ## Tech Stack
 
@@ -56,7 +61,7 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 |---|---|
 | Framework | LangGraph, LangChain, Python |
 | LLM | `gpt-4.1-mini`, `gpt-4.1` via OpenAI API |
-| Retrieval | Dense-first Hybrid Retrieval with lexical fallback, Hit Rate@K, MRR |
+| Retrieval | FAISS Vector Store + Dense-first Hybrid Retrieval with lexical fallback, Hit Rate@K, MRR |
 | Embedding | `intfloat/multilingual-e5-large` |
 | Search | Tavily |
 | Output | Markdown, PDF |
@@ -103,7 +108,8 @@ Final choice:
 
 - Hybrid Dense + Lexical
 - Runtime note:
-  - 기본 설정은 dense retrieval을 우선 사용한다.
+  - 기본 설정은 FAISS vector store를 `output/vector_store/`에 저장해 다음 실행부터 문서 임베딩을 재사용한다.
+  - 빠른 로컬 테스트는 `TS_EMBEDDING_BACKEND=hashing`을 사용할 수 있고, 의미 기반 검색 품질을 우선하면 `auto` 또는 `huggingface`를 사용한다.
   - 임베딩 모델을 초기화할 수 없거나 로컬 캐시가 없으면 lexical fallback으로 동작한다.
   - 따라서 `relevance_score`는 실행 시점에 dense-first hybrid 점수일 수도 있고 lexical fallback 점수일 수도 있다.
 
@@ -188,6 +194,65 @@ flowchart TD
 - `max_iteration`을 초과하면 `status=failed`, `next_step=END`로 종료한다.
 - 즉, 이 workflow는 선형 파이프라인이 아니라 “검증 -> 실패 원인 진단 -> 적절한 단계 재호출” 구조로 동작한다.
 
+## Runtime Safety
+
+- Exception handling:
+  - `except Exception`으로 모든 오류를 뭉뚱그리지 않고, 외부 서비스 오류 / timeout / 포맷팅 오류 / 문서 로드 오류를 분리한다.
+- Retry:
+  - OpenAI, Tavily 같은 외부 호출은 retryable 오류에 한해서 exponential backoff를 적용한다.
+- Timeout:
+  - OpenAI 호출 timeout과 Tavily 검색 timeout, workflow 전체 timeout을 분리해 설정한다.
+- Logging:
+  - `tech_strategy.*` 네임스페이스 로거로 supervisor 라우팅, node 시작/종료, retry 이유, fallback 발생 원인을 남긴다.
+
+## Environment Configuration
+
+Recommended `.env` strategy:
+
+- Secret keys:
+  - `OPENAI_API_KEY`, `TAVILY_API_KEY`, `LANGSMITH_API_KEY`만 실제 비밀값으로 관리한다.
+- Runtime controls:
+  - `TS_OPENAI_TIMEOUT_SECONDS`
+  - `TS_EXTERNAL_API_TIMEOUT_SECONDS`
+  - `TS_EXTERNAL_API_MAX_RETRIES`
+  - `TS_RETRY_BACKOFF_BASE_SECONDS`
+  - `TS_RETRY_BACKOFF_MAX_SECONDS`
+  - `TS_WORKFLOW_TIMEOUT_SECONDS`
+  - `TS_LOG_LEVEL`
+- Retrieval / search quality:
+  - `TS_ENABLE_DENSE_RETRIEVAL`
+  - `TS_ENABLE_VECTOR_STORE`
+  - `TS_EMBEDDING_LOCAL_ONLY`
+  - `TS_TAVILY_MAX_RESULTS`
+  - `TS_MAX_WEB_QUERIES`
+  - `TS_MIN_WEB_RESULTS`
+  - `TS_MIN_SOURCE_DIVERSITY`
+  - `TS_MIN_RECENT_RATIO`
+  - `TS_MIN_SOURCE_RELIABILITY`
+
+Recommended values:
+
+- Local debug / Tavily credit 절약:
+  - `TS_MAX_ITERATION=1`
+  - `TS_TAVILY_MAX_RESULTS=1`
+  - `TS_MAX_WEB_QUERIES=2`
+  - `TS_MIN_WEB_RESULTS=1`
+  - `TS_MIN_SOURCE_DIVERSITY=1`
+  - `TS_LOG_LEVEL=DEBUG`
+- Final deliverable run:
+  - `TS_MAX_ITERATION=5`
+  - `TS_TAVILY_MAX_RESULTS=8`
+  - `TS_TAVILY_SEARCH_DEPTH=advanced`
+  - `TS_MAX_WEB_QUERIES=8`
+  - `TS_MIN_WEB_RESULTS=6`
+  - `TS_MIN_SOURCE_DIVERSITY=2`
+  - `TS_MIN_RECENT_RATIO=0.4~0.5`
+  - `TS_MIN_SOURCE_RELIABILITY=0.65~0.7`
+  - `TS_OPENAI_TIMEOUT_SECONDS=90`
+  - `TS_EXTERNAL_API_TIMEOUT_SECONDS=25`
+  - `TS_EXTERNAL_API_MAX_RETRIES=2`
+  - `TS_WORKFLOW_TIMEOUT_SECONDS=900`
+
 ## Report Structure
 
 - SUMMARY
@@ -206,7 +271,7 @@ mini_project/
 ├── data/                  # PDF 문서와 Retrieval 평가 데이터
 │   ├── eval/              # Hit Rate@K, MRR 평가용 샘플
 │   └── knowledge_base/    # HBM, PIM, CXL 기반 자료
-├── output/                # PDF / Markdown 결과 저장
+├── output/                # PDF / Markdown 결과와 FAISS vector store 저장
 ├── tech_strategy/         # Agent, State, Workflow 구현 패키지
 │   ├── config.py          # 환경 변수와 실행 설정
 │   ├── design_artifact.py # 설계 산출물 생성 스크립트
@@ -227,6 +292,7 @@ mini_project/
 Copy `.env.example` to `.env` and fill in `OPENAI_API_KEY`, `TAVILY_API_KEY`, and optionally `LANGSMITH_API_KEY`.
 For Tavily credit control during testing, keep `TS_TAVILY_MAX_RESULTS=1`, `TS_TAVILY_SEARCH_DEPTH=basic`, `TS_MAX_WEB_QUERIES=2`, `TS_MIN_WEB_RESULTS=1`, `TS_MIN_SOURCE_DIVERSITY=1`, and `TS_MAX_ITERATION=1`.
 For final-quality runs, raise those values after checking the remaining Tavily credits.
+Set `TS_LOG_LEVEL=DEBUG` while tuning retrieval/web search, then switch to `INFO` for final runs.
 
 Generate the design artifact:
 
@@ -258,5 +324,5 @@ Expected output files:
 
 ## Contributors
 
-- 배석현 : Prompt Engineering, Agent Design, Assessment / Decision Logic
-- 박나연 : Retrieval / Evaluation, Documentation, Draft / PDF Formatting
+배석현: Query/Input Node, Web Search Node, Assessment Node, Decision Node, and Implementation
+박나연: Retrieval Node, Draft Node, Formatting Node

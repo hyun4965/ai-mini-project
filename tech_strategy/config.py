@@ -53,6 +53,7 @@ class StrategyConfig:
     project_root: Path
     data_dir: Path
     output_dir: Path
+    vector_store_dir: Path
     subject_company: str = field(
         default_factory=lambda: os.getenv(
             "TS_SUBJECT_COMPANY",
@@ -78,12 +79,21 @@ class StrategyConfig:
     analysis_model: str = field(default_factory=lambda: os.getenv("TS_ANALYSIS_MODEL", "gpt-4.1"))
     draft_model: str = field(default_factory=lambda: os.getenv("TS_DRAFT_MODEL", "gpt-4.1"))
     embedding_model: str = field(default_factory=lambda: os.getenv("TS_EMBEDDING_MODEL", "intfloat/multilingual-e5-large"))
+    embedding_backend: str = field(default_factory=lambda: os.getenv("TS_EMBEDDING_BACKEND", "auto"))
     enable_dense_retrieval: bool = field(default_factory=lambda: os.getenv("TS_ENABLE_DENSE_RETRIEVAL", "1") in {"1", "true", "TRUE", "yes", "YES"})
+    enable_vector_store: bool = field(default_factory=lambda: os.getenv("TS_ENABLE_VECTOR_STORE", "1") in {"1", "true", "TRUE", "yes", "YES"})
     embedding_local_files_only: bool = field(default_factory=lambda: os.getenv("TS_EMBEDDING_LOCAL_ONLY", "1") in {"1", "true", "TRUE", "yes", "YES"})
     retrieval_top_k: int = field(default_factory=lambda: int(os.getenv("TS_RETRIEVAL_TOP_K", "8")))
     retrieval_score_threshold: float = field(default_factory=lambda: float(os.getenv("TS_RETRIEVAL_SCORE_THRESHOLD", "0.8")))
     tavily_max_results: int = field(default_factory=lambda: int(os.getenv("TS_TAVILY_MAX_RESULTS", "5")))
     tavily_search_depth: str = field(default_factory=lambda: os.getenv("TS_TAVILY_SEARCH_DEPTH", "basic"))
+    openai_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("TS_OPENAI_TIMEOUT_SECONDS", "90")))
+    external_api_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("TS_EXTERNAL_API_TIMEOUT_SECONDS", "25")))
+    external_api_max_retries: int = field(default_factory=lambda: int(os.getenv("TS_EXTERNAL_API_MAX_RETRIES", "2")))
+    retry_backoff_base_seconds: float = field(default_factory=lambda: float(os.getenv("TS_RETRY_BACKOFF_BASE_SECONDS", "1.0")))
+    retry_backoff_max_seconds: float = field(default_factory=lambda: float(os.getenv("TS_RETRY_BACKOFF_MAX_SECONDS", "8.0")))
+    workflow_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("TS_WORKFLOW_TIMEOUT_SECONDS", "900")))
+    log_level: str = field(default_factory=lambda: os.getenv("TS_LOG_LEVEL", "INFO"))
     max_web_queries: int = field(default_factory=lambda: int(os.getenv("TS_MAX_WEB_QUERIES", "6")))
     min_retrieved_docs: int = field(default_factory=lambda: int(os.getenv("TS_MIN_RETRIEVED_DOCS", "4")))
     min_web_results: int = field(default_factory=lambda: int(os.getenv("TS_MIN_WEB_RESULTS", "6")))
@@ -99,6 +109,8 @@ class StrategyConfig:
         root = Path(project_root).resolve()
         data_dir = root / "data" / "knowledge_base"
         output_dir = root / "output"
+        vector_store_dir = output_dir / "vector_store"
         data_dir.mkdir(parents=True, exist_ok=True)
         output_dir.mkdir(parents=True, exist_ok=True)
-        return cls(project_root=root, data_dir=data_dir, output_dir=output_dir)
+        vector_store_dir.mkdir(parents=True, exist_ok=True)
+        return cls(project_root=root, data_dir=data_dir, output_dir=output_dir, vector_store_dir=vector_store_dir)

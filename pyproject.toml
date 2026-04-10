@@ -10,6 +10,7 @@ dependencies = [
     "langchain-openai>=1.0.1",
     "langchain-tavily>=0.2.12",
     "langgraph>=1.0.1",
+    "faiss-cpu>=1.13.0",
     "matplotlib>=3.10.7",
     "pypdf>=6.0.0",
     "python-dotenv>=1.2.1",

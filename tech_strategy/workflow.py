@@ -1,23 +1,40 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from collections import defaultdict
 from math import sqrt
 from pathlib import Path
 from typing import Any
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import END, START, StateGraph
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError, BadRequestError, OpenAIError, RateLimitError
+from pydantic import ValidationError
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+from sklearn.feature_extraction.text import HashingVectorizer
 
 from .config import StrategyConfig
+from .errors import (
+    DocumentLoadError,
+    EmbeddingInitializationError,
+    LLMServiceError,
+    OutputWriteError,
+    PDFValidationError,
+    VectorStoreError,
+)
 from .formatting import markdown_to_pdf, validate_pdf_output
+from .logging_utils import get_logger
 from .models import AssessmentResult, DecisionOutput, QueryInterpretation
+from .resilience import retry_with_backoff
 from .services.web_search import WebSearchService
 from .state import StrategyState
 from .state_contracts import (
@@ -35,6 +52,26 @@ from .state_contracts import (
     SupervisorInput,
     SupervisorUpdate,
 )
+
+
+class _HashingEmbeddings(Embeddings):
+    """HuggingFace 임베딩을 쓸 수 없을 때 FAISS 캐시를 유지하기 위한 로컬 fallback 임베딩."""
+
+    def __init__(self, n_features: int = 2048) -> None:
+        """고정 차원 hashing vectorizer를 초기화한다."""
+        self.vectorizer = HashingVectorizer(
+            n_features=n_features,
+            alternate_sign=False,
+            norm="l2",
+        )
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """문서 목록을 dense float vector 목록으로 변환한다."""
+        return self.vectorizer.transform(texts).astype("float32").toarray().tolist()
+
+    def embed_query(self, text: str) -> list[float]:
+        """단일 query를 dense float vector로 변환한다."""
+        return self.embed_documents([text])[0]
 
 
 QUERY_PROMPT = """당신은 반도체 R&D 전략 워크플로우의 계획 수립 에이전트다.
@@ -133,13 +170,32 @@ class TechStrategyWorkflow:
     def __init__(self, config: StrategyConfig) -> None:
         """LLM 클라이언트, 서비스, 로컬 검색 캐시를 초기화한다."""
         self.config = config
-        self.planner_llm = ChatOpenAI(model=config.planner_model, temperature=0)
-        self.analysis_llm = ChatOpenAI(model=config.analysis_model, temperature=0)
-        self.draft_llm = ChatOpenAI(model=config.draft_model, temperature=0)
+        self.logger = get_logger("workflow")
+        self.planner_llm = ChatOpenAI(
+            model=config.planner_model,
+            temperature=0,
+            timeout=config.openai_timeout_seconds,
+            max_retries=0,
+        )
+        self.analysis_llm = ChatOpenAI(
+            model=config.analysis_model,
+            temperature=0,
+            timeout=config.openai_timeout_seconds,
+            max_retries=0,
+        )
+        self.draft_llm = ChatOpenAI(
+            model=config.draft_model,
+            temperature=0,
+            timeout=config.openai_timeout_seconds,
+            max_retries=0,
+        )
         self.embeddings = None
         self.web_search_service = WebSearchService(config)
         self._chunk_cache: list[Document] | None = None
         self._embedding_cache: list[list[float]] | None = None
+        self._vector_store: FAISS | None = None
+        self._hashing_embeddings: _HashingEmbeddings | None = None
+        self._vector_embedding_backend = ""
 
     def build(self):
         """워크플로우 graph를 컴파일하고 노드 간 전이를 연결한다."""
@@ -188,11 +244,41 @@ class TechStrategyWorkflow:
             ]
         return update
 
+    def _invoke_llm_with_retry(self, operation_name: str, operation):
+        """LLM 호출을 retry/backoff 정책으로 감싼다."""
+
+        def wrapped():
+            try:
+                return operation()
+            except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
+                raise LLMServiceError("openai", f"{operation_name} failed: {exc}", retryable=True) from exc
+            except APIStatusError as exc:
+                retryable = getattr(exc, "status_code", 0) >= 500
+                raise LLMServiceError("openai", f"{operation_name} failed with API status error: {exc}", retryable=retryable) from exc
+            except (AuthenticationError, BadRequestError, OpenAIError, ValidationError) as exc:
+                raise LLMServiceError("openai", f"{operation_name} failed: {exc}", retryable=False) from exc
+
+        return retry_with_backoff(
+            wrapped,
+            operation_name=operation_name,
+            max_retries=self.config.external_api_max_retries,
+            base_delay_seconds=self.config.retry_backoff_base_seconds,
+            max_delay_seconds=self.config.retry_backoff_max_seconds,
+            logger=self.logger,
+        )
+
     def supervisor_node(self, state: SupervisorInput) -> SupervisorUpdate:
         """워크플로우 진행 상황을 점검하고 다음에 필요한 노드로 라우팅한다."""
         interpretation = self._ensure_query_plan(state)
         review = self._compute_review(state, interpretation)
         log_message = review.pop("log_message")
+        self.logger.info(
+            "supervisor.route next=%s retry=%s/%s coverage=%s",
+            review.get("next_step"),
+            review.get("retry_count"),
+            state["control"].get("max_iteration"),
+            review.get("coverage_status"),
+        )
 
         return {
             "scope": {
@@ -210,6 +296,7 @@ class TechStrategyWorkflow:
         """로컬 근거를 검색/필터링하고 실패 시 질의를 다시 작성한다."""
         current_plan = dict(state["query_plan"])
         queries = current_plan.get("retrieval_queries", [])
+        self.logger.info("retrieval.start queries=%d", len(queries))
         candidates: list[dict[str, Any]] = []
         threshold_filtered: list[dict[str, Any]] = []
         scores: list[float] = []
@@ -256,6 +343,9 @@ class TechStrategyWorkflow:
             rewrite_history = [
                 f"[rewrite][retrieval] reason={failure_reason} queries={current_plan['retrieval_queries']}"
             ]
+            self.logger.warning("retrieval.retry reason=%s attempt=%d", failure_reason, attempt)
+        else:
+            self.logger.info("retrieval.complete docs=%d confidence=%.2f", len(keyword_filtered), retrieval_confidence)
 
         return {
             "query_plan": current_plan,
@@ -284,6 +374,7 @@ class TechStrategyWorkflow:
 
     def assessment_node(self, state: AssessmentInput) -> AssessmentUpdate:
         """근거를 종합해 기술-경쟁사 쌍별 TRL/위협도 평가를 만든다."""
+        self.logger.info("assessment.start technologies=%d competitors=%d", len(state["scope"]["target_technologies"] or [state["scope"]["target_technology"]]), len(state["scope"]["target_competitors"]))
         bundle = self._build_evidence_bundle(state)
         assessment_results: list[dict[str, Any]] = []
 
@@ -331,10 +422,12 @@ class TechStrategyWorkflow:
 
     def decision_node(self, state: DecisionInput) -> DecisionUpdate:
         """평가 결과를 바탕으로 R&D 추천을 생성하고 검증한다."""
+        self.logger.info("decision.start assessment_rows=%d", len(state["assessment"].get("results", [])))
         decision = self._make_decision(state)
         is_valid, decision_reason, decision_status = self._validate_decision_quality(
             state | {"decision": {**state["decision"], "result": decision}}
         )
+        self.logger.info("decision.complete valid=%s reason=%s", is_valid, decision_reason or "ok")
         return {
             "decision": {
                 "result": decision,
@@ -351,6 +444,7 @@ class TechStrategyWorkflow:
     def draft_node(self, state: DraftInput) -> DraftUpdate:
         """Markdown 보고서 초안을 작성하고 필요하면 규칙 기반 초안으로 대체한다."""
         draft_version = state["draft"]["version"] + 1
+        self.logger.info("draft.start version=%d", draft_version)
         markdown = self._draft_report(state)
         quality = self._score_draft(markdown)
         is_valid, draft_reason, draft_status = self._validate_draft_quality(
@@ -368,6 +462,7 @@ class TechStrategyWorkflow:
                 is_valid = fallback_valid
                 draft_reason = fallback_reason
                 draft_status = f"fallback:{fallback_status}"
+        self.logger.info("draft.complete version=%d valid=%s quality=%.2f", draft_version, is_valid, quality)
         return {
             "draft": {
                 "markdown_text": markdown,
@@ -391,12 +486,17 @@ class TechStrategyWorkflow:
         pdf_path = self.config.output_dir / f"ai-mini_output_{label}.pdf"
 
         markdown_text = state["draft"]["markdown_text"]
-        markdown_path.write_text(markdown_text, encoding="utf-8")
+        self.logger.info("formatting.start markdown=%s pdf=%s", markdown_path, pdf_path)
         try:
+            try:
+                markdown_path.write_text(markdown_text, encoding="utf-8")
+            except OSError as exc:
+                raise OutputWriteError(f"failed to write markdown output: {exc}") from exc
             generated_path = markdown_to_pdf(markdown_text, pdf_path)
             is_valid_pdf, validation_message = validate_pdf_output(markdown_text, generated_path)
             if not is_valid_pdf:
-                raise ValueError(validation_message)
+                raise PDFValidationError(validation_message)
+            self.logger.info("formatting.complete pdf=%s", generated_path)
             return {
                 "output": {
                     "pdf_path": generated_path,
@@ -407,7 +507,8 @@ class TechStrategyWorkflow:
                 "control": self._control_update("formatting", status="completed"),
                 "analysis_log": [f"[formatting] pdf={generated_path} validation={validation_message}"],
             }
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError, OutputWriteError, PDFValidationError) as exc:
+            self.logger.exception("formatting.failed: %s", exc)
             return {
                 "output": {
                     "pdf_path": "",
@@ -440,20 +541,24 @@ class TechStrategyWorkflow:
         competitors = ", ".join(self.config.competitor_catalog)
         parser = self.planner_llm.with_structured_output(QueryInterpretation)
         try:
-            result = parser.invoke(
-                [
-                    SystemMessage(content=QUERY_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Allowed technologies: {technologies}\n"
-                            f"Known competitors: {competitors}\n"
-                            f"User scenario: {user_query}"
-                        )
-                    ),
-                ]
+            result = self._invoke_llm_with_retry(
+                "query_planning",
+                lambda: parser.invoke(
+                    [
+                        SystemMessage(content=QUERY_PROMPT),
+                        HumanMessage(
+                            content=(
+                                f"Allowed technologies: {technologies}\n"
+                                f"Known competitors: {competitors}\n"
+                                f"User scenario: {user_query}"
+                            )
+                        ),
+                    ]
+                ),
             )
             interpretation = result.model_dump()
-        except Exception:
+        except LLMServiceError as exc:
+            self.logger.warning("query planning fallback triggered: %s", exc)
             interpretation = self._fallback_query_interpretation(state["user_query"])
 
         if not interpretation["target_technologies"]:
@@ -943,12 +1048,17 @@ class TechStrategyWorkflow:
             normalized_name = path.stem.lower().replace("_", " ")
             if "health belief model" in normalized_name:
                 continue
-            if path.suffix.lower() in {".txt", ".md"}:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-            elif path.suffix.lower() == ".pdf":
-                reader = PdfReader(str(path))
-                text = "\n".join((page.extract_text() or "") for page in reader.pages)
-            else:
+            try:
+                if path.suffix.lower() in {".txt", ".md"}:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                elif path.suffix.lower() == ".pdf":
+                    reader = PdfReader(str(path))
+                    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+                else:
+                    continue
+            except (OSError, PdfReadError, ValueError) as exc:
+                error = DocumentLoadError(f"failed to load document {path}: {exc}")
+                self.logger.warning("document.load.skipped path=%s reason=%s", path, error)
                 continue
             if text.strip():
                 documents.append(Document(page_content=text, metadata={"source": str(path), "title": path.stem}))
@@ -965,17 +1075,207 @@ class TechStrategyWorkflow:
             return self.embeddings
 
         try:
+            if self.config.embedding_local_files_only:
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+
             self.embeddings = HuggingFaceEmbeddings(
                 model_name=self.config.embedding_model,
                 model_kwargs={"device": "cpu", "local_files_only": self.config.embedding_local_files_only},
                 encode_kwargs={"normalize_embeddings": True},
             )
-        except Exception:
+        except Exception as exc:
+            error = EmbeddingInitializationError(
+                f"embedding model {self.config.embedding_model} initialization failed: {exc}"
+            )
+            self.logger.warning("embedding.init.failed model=%s reason=%s", self.config.embedding_model, error)
             self.embeddings = None
         return self.embeddings
 
+    def _get_vector_store_embeddings(self) -> Any | None:
+        """FAISS 저장소에 사용할 임베딩을 반환하고 dense 실패 시 hashing fallback을 사용한다."""
+        preferred_backend = self.config.embedding_backend.lower()
+        saved_backend = self._saved_vector_store_backend()
+        if preferred_backend == "hashing" or (preferred_backend == "auto" and saved_backend == "hashing"):
+            if self._hashing_embeddings is None:
+                self._hashing_embeddings = _HashingEmbeddings()
+            self._vector_embedding_backend = "hashing"
+            return self._hashing_embeddings
+
+        embeddings = self._get_embeddings()
+        if embeddings is not None:
+            self._vector_embedding_backend = "huggingface"
+            return embeddings
+
+        if not self.config.enable_vector_store:
+            return None
+        if self._hashing_embeddings is None:
+            self._hashing_embeddings = _HashingEmbeddings()
+        self._vector_embedding_backend = "hashing"
+        return self._hashing_embeddings
+
+    def _saved_vector_store_backend(self) -> str:
+        """저장된 FAISS metadata에서 사용된 임베딩 backend 이름을 읽는다."""
+        metadata_path = self.config.vector_store_dir / "metadata.json"
+        if not metadata_path.exists():
+            return ""
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ""
+        backend = metadata.get("vector_backend")
+        return backend if isinstance(backend, str) else ""
+
+    def _corpus_signature(self, backend_name: str) -> str:
+        """문서/청크/임베딩 설정이 바뀌었는지 판별할 fingerprint를 만든다."""
+        payload: list[dict[str, Any]] = [
+            {
+                "embedding_model": self.config.embedding_model,
+                "vector_backend": backend_name,
+                "chunk_size": 1200,
+                "chunk_overlap": 200,
+            }
+        ]
+        for path in sorted(self.config.data_dir.rglob("*")):
+            if path.name.startswith(".") or not path.is_file() or path.suffix.lower() not in {".txt", ".md", ".pdf"}:
+                continue
+            stat = path.stat()
+            payload.append(
+                {
+                    "path": str(path.relative_to(self.config.project_root)),
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
+            )
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _load_or_build_vector_store(
+        self,
+        chunks: list[Document] | None,
+        embeddings: Any,
+        backend_name: str,
+    ) -> FAISS | None:
+        """FAISS 인덱스를 재사용하거나 문서 변경 시 새로 생성해 로컬에 저장한다."""
+        if not self.config.enable_vector_store:
+            return None
+        if self._vector_store is not None:
+            return self._vector_store
+
+        index_dir = self.config.vector_store_dir
+        metadata_path = index_dir / "metadata.json"
+        signature = self._corpus_signature(backend_name)
+
+        if metadata_path.exists() and (index_dir / "index.faiss").exists() and (index_dir / "index.pkl").exists():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if metadata.get("signature") == signature:
+                    self._vector_store = FAISS.load_local(
+                        str(index_dir),
+                        embeddings,
+                        allow_dangerous_deserialization=True,
+                    )
+                    return self._vector_store
+            except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+                error = VectorStoreError(f"vector store load failed: {exc}")
+                self.logger.warning("vector_store.load.failed backend=%s reason=%s", backend_name, error)
+                self._vector_store = None
+
+        if not chunks:
+            return None
+
+        try:
+            self._vector_store = FAISS.from_documents(chunks, embeddings)
+            self._vector_store.save_local(str(index_dir))
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "signature": signature,
+                        "embedding_model": self.config.embedding_model,
+                        "vector_backend": backend_name,
+                        "chunk_count": len(chunks),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return self._vector_store
+        except (OSError, ValueError, RuntimeError) as exc:
+            error = VectorStoreError(f"vector store build failed: {exc}")
+            self.logger.warning("vector_store.build.failed backend=%s reason=%s", backend_name, error)
+            self._vector_store = None
+            return None
+
+    def _dense_score_from_faiss_distance(self, distance: float) -> float:
+        """FAISS L2 거리값을 기존 0~1 dense score 범위로 근사 변환한다."""
+        return round(max(0.0, min(1.0, (4.0 - float(distance)) / 4.0)), 4)
+
+    def _retrieve_documents_from_vector_store(
+        self,
+        query: str,
+        chunks: list[Document] | None,
+        embeddings: Any,
+        backend_name: str,
+    ) -> list[dict[str, Any]] | None:
+        """저장된 FAISS 벡터 인덱스를 사용해 retrieval 후보를 가져온다."""
+        vector_store = self._load_or_build_vector_store(chunks, embeddings, backend_name)
+        if vector_store is None:
+            return None
+
+        try:
+            matches = vector_store.similarity_search_with_score(
+                query,
+                k=self.config.retrieval_top_k,
+                fetch_k=max(self.config.retrieval_top_k * 4, self.config.retrieval_top_k),
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            error = VectorStoreError(f"vector store query failed: {exc}")
+            self.logger.warning("vector_store.query.failed backend=%s reason=%s", backend_name, error)
+            return None
+
+        query_terms = self._tokenize(query)
+        scored = []
+        for doc, distance in matches:
+            content_terms = self._tokenize(doc.page_content)
+            lexical_score = len(query_terms & content_terms) / max(len(query_terms), 1)
+            dense_score = self._dense_score_from_faiss_distance(distance)
+            hybrid_score = round((0.65 * dense_score) + (0.35 * lexical_score), 4)
+            scored.append((hybrid_score, lexical_score, dense_score, doc))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [
+            {
+                "title": item.metadata.get("title", Path(item.metadata.get("source", "document")).stem),
+                "source": item.metadata.get("source", "local"),
+                "source_type": "retrieval",
+                "content": item.page_content,
+                "relevance_score": round(score, 4),
+                "url": None,
+                "metadata": {
+                    **item.metadata,
+                    "retrieval_technique": f"faiss_vector_store_{backend_name}_hybrid",
+                    "lexical_score": lexical_score,
+                    "dense_score": dense_score,
+                },
+            }
+            for score, lexical_score, dense_score, item in scored[: self.config.retrieval_top_k]
+        ]
+
     def _retrieve_documents(self, query: str) -> list[dict[str, Any]]:
         """dense/lexical 혼합 점수 계산으로 상위 로컬 chunk를 검색한다."""
+        embeddings = self._get_vector_store_embeddings()
+        if embeddings is not None:
+            vector_results = self._retrieve_documents_from_vector_store(
+                query,
+                None,
+                embeddings,
+                self._vector_embedding_backend or "unknown",
+            )
+            if vector_results is not None:
+                return vector_results
+
         chunks = self._load_documents()
         if not chunks:
             return []
@@ -991,8 +1291,15 @@ class TechStrategyWorkflow:
         ]
         dense_scores: list[float] | None = None
 
-        embeddings = self._get_embeddings()
         if embeddings is not None:
+            vector_results = self._retrieve_documents_from_vector_store(
+                query,
+                chunks,
+                embeddings,
+                self._vector_embedding_backend or "unknown",
+            )
+            if vector_results is not None:
+                return vector_results
             try:
                 if self._embedding_cache is None:
                     self._embedding_cache = embeddings.embed_documents([doc.page_content for doc in chunks])
@@ -1001,7 +1308,8 @@ class TechStrategyWorkflow:
                     round((self._cosine_similarity(query_embedding, embedding) + 1) / 2, 4)
                     for embedding in self._embedding_cache
                 ]
-            except Exception:
+            except (OSError, ValueError, RuntimeError) as exc:
+                self.logger.warning("dense_embedding.score.failed query=%s reason=%s", query[:80], exc)
                 dense_scores = None
 
         scored = []
@@ -1139,17 +1447,20 @@ class TechStrategyWorkflow:
         }
 
         try:
-            result = schema.invoke(
-                [
-                    SystemMessage(content=ASSESSMENT_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"사용자 질의: {user_query}\n"
-                            f"평가 대상: {technology} / {competitor}\n"
-                            f"Evidence bundle:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
-                        )
-                    ),
-                ]
+            result = self._invoke_llm_with_retry(
+                f"assessment:{technology}:{competitor}",
+                lambda: schema.invoke(
+                    [
+                        SystemMessage(content=ASSESSMENT_PROMPT),
+                        HumanMessage(
+                            content=(
+                                f"사용자 질의: {user_query}\n"
+                                f"평가 대상: {technology} / {competitor}\n"
+                                f"Evidence bundle:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+                            )
+                        ),
+                    ]
+                ),
             )
             return self._normalize_assessment_result(
                 raw=result.model_dump(),
@@ -1157,7 +1468,13 @@ class TechStrategyWorkflow:
                 competitor=competitor,
                 evidence=evidence,
             )
-        except Exception:
+        except LLMServiceError as exc:
+            self.logger.warning(
+                "assessment.fallback technology=%s competitor=%s reason=%s",
+                technology,
+                competitor,
+                exc,
+            )
             direct = evidence.get("direct_evidence", [])
             indirect = evidence.get("indirect_evidence", [])
             trl = self._infer_trl_from_evidence(
@@ -1192,19 +1509,23 @@ class TechStrategyWorkflow:
         schema = self.analysis_llm.with_structured_output(DecisionOutput)
         assessments = state["assessment"].get("results", [])
         try:
-            result = schema.invoke(
-                [
-                    SystemMessage(content=DECISION_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"사용자 질의: {state['user_query']}\n"
-                            f"Assessment 결과:\n{json.dumps(assessments, ensure_ascii=False, indent=2)}"
-                        )
-                    ),
-                ]
+            result = self._invoke_llm_with_retry(
+                "decision",
+                lambda: schema.invoke(
+                    [
+                        SystemMessage(content=DECISION_PROMPT),
+                        HumanMessage(
+                            content=(
+                                f"사용자 질의: {state['user_query']}\n"
+                                f"Assessment 결과:\n{json.dumps(assessments, ensure_ascii=False, indent=2)}"
+                            )
+                        ),
+                    ]
+                ),
             )
             return self._normalize_decision_output(result.model_dump(), state)
-        except Exception:
+        except LLMServiceError as exc:
+            self.logger.warning("decision.fallback reason=%s", exc)
             grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for item in assessments:
                 grouped[item["technology"]].append(item)
@@ -1377,21 +1698,24 @@ class TechStrategyWorkflow:
         subject_company = scope.get("subject_company") or self.config.subject_company
 
         try:
-            response = self.draft_llm.invoke(
-                [
-                    SystemMessage(content=DRAFT_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"사용자 질의: {state['user_query']}\n"
-                            f"기준 기업: {subject_company}\n"
-                            f"대상 기술: {scope['target_technologies']}\n"
-                            f"대상 경쟁사: {scope['target_competitors']}\n"
-                            f"Assessment 결과: {json.dumps(assessments, ensure_ascii=False, indent=2)}\n"
-                            f"Decision 결과: {json.dumps(decision, ensure_ascii=False, indent=2)}\n"
-                            f"참고자료: {json.dumps(references, ensure_ascii=False, indent=2)}"
-                        )
-                    ),
-                ]
+            response = self._invoke_llm_with_retry(
+                "draft",
+                lambda: self.draft_llm.invoke(
+                    [
+                        SystemMessage(content=DRAFT_PROMPT),
+                        HumanMessage(
+                            content=(
+                                f"사용자 질의: {state['user_query']}\n"
+                                f"기준 기업: {subject_company}\n"
+                                f"대상 기술: {scope['target_technologies']}\n"
+                                f"대상 경쟁사: {scope['target_competitors']}\n"
+                                f"Assessment 결과: {json.dumps(assessments, ensure_ascii=False, indent=2)}\n"
+                                f"Decision 결과: {json.dumps(decision, ensure_ascii=False, indent=2)}\n"
+                                f"참고자료: {json.dumps(references, ensure_ascii=False, indent=2)}"
+                            )
+                        ),
+                    ]
+                ),
             )
             text = response.content
             if not all(section in text for section in self._required_draft_headings()):
@@ -1399,7 +1723,8 @@ class TechStrategyWorkflow:
             if self._has_excessive_english_narrative(text):
                 raise ValueError("Draft contains excessive English narrative")
             return text
-        except Exception:
+        except (LLMServiceError, ValueError) as exc:
+            self.logger.warning("draft.fallback reason=%s", exc)
             return self._build_fallback_draft(state)
 
     def _build_fallback_draft(self, state: DraftInput | SupervisorInput) -> str:

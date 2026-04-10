@@ -6,9 +6,13 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+import httpx
 from langchain_tavily import TavilySearch
 
 from ..config import StrategyConfig
+from ..errors import ServiceTimeoutError, WebSearchServiceError
+from ..logging_utils import get_logger
+from ..resilience import retry_with_backoff, run_with_timeout
 from ..state_contracts import WebSearchInput, WebSearchUpdate
 
 
@@ -18,6 +22,7 @@ class WebSearchService:
     def __init__(self, config: StrategyConfig) -> None:
         """워크플로우 설정을 바탕으로 선택적 Tavily 검색 도구를 초기화한다."""
         self.config = config
+        self.logger = get_logger("web_search")
         if not os.environ.get("TAVILY_API_KEY"):
             self.search_tool = None
             return
@@ -26,7 +31,8 @@ class WebSearchService:
                 max_results=config.tavily_max_results,
                 search_depth=config.tavily_search_depth,
             )
-        except Exception:
+        except (ImportError, OSError, ValueError, RuntimeError) as exc:
+            self.logger.warning("web_search.init.failed reason=%s", exc)
             self.search_tool = None
 
     @staticmethod
@@ -51,9 +57,15 @@ class WebSearchService:
         base_queries, counter_queries = self._build_balanced_web_queries(current_plan, state)
         all_queries = base_queries + counter_queries
         search_errors: list[str] = []
+        self.logger.info(
+            "web_search.start queries=%d competitors=%d",
+            len(all_queries),
+            len(state["scope"].get("target_competitors", [])),
+        )
 
         if self.search_tool is None:
             attempt = state["web_search"].get("attempt", 0) + 1
+            self.logger.warning("web_search.unavailable reason=no_search_tool")
             return {
                 "query_plan": current_plan,
                 "web_search": {
@@ -147,6 +159,25 @@ class WebSearchService:
             rewrite_history = [
                 f"[rewrite][web] reason={failure_reason} web_queries={current_plan['web_queries']} counter_queries={current_plan['counter_queries']}"
             ]
+            self.logger.warning(
+                "web_search.retry reason=%s attempt=%d results=%d sources=%d recent=%.2f reliability=%.2f bias=%.2f",
+                failure_reason,
+                attempt,
+                len(results),
+                source_diversity,
+                freshness_score,
+                source_reliability_score,
+                bias_risk_score,
+            )
+        else:
+            self.logger.info(
+                "web_search.complete results=%d sources=%d recent=%.2f reliability=%.2f bias=%.2f",
+                len(results),
+                source_diversity,
+                freshness_score,
+                source_reliability_score,
+                bias_risk_score,
+            )
 
         return {
             "query_plan": current_plan,
@@ -312,17 +343,52 @@ class WebSearchService:
         """Tavily를 호출하고 원본 검색 결과를 워크플로우 레코드로 정규화한다."""
         if self.search_tool is None:
             return []
+
+        def operation() -> Any:
+            try:
+                raw = run_with_timeout(
+                    lambda: self.search_tool.invoke(query),
+                    timeout_seconds=self.config.external_api_timeout_seconds,
+                    timeout_error_factory=lambda seconds: ServiceTimeoutError("tavily", seconds),
+                )
+            except ServiceTimeoutError:
+                raise
+            except (httpx.HTTPError, OSError, RuntimeError, ValueError) as exc:
+                raise WebSearchServiceError(
+                    "tavily",
+                    f"tavily query failed for '{query[:80]}': {exc}",
+                    retryable=True,
+                ) from exc
+
+            if isinstance(raw, dict) and raw.get("error"):
+                raise WebSearchServiceError(
+                    "tavily",
+                    f"tavily returned error for '{query[:80]}': {raw['error']}",
+                    retryable=True,
+                )
+            return raw
+
         try:
-            raw = self.search_tool.invoke(query)
-        except Exception as exc:
+            raw = retry_with_backoff(
+                operation,
+                operation_name=f"web_search:{query[:80]}",
+                max_retries=self.config.external_api_max_retries,
+                base_delay_seconds=self.config.retry_backoff_base_seconds,
+                max_delay_seconds=self.config.retry_backoff_max_seconds,
+                logger=self.logger,
+            )
+        except (ServiceTimeoutError, WebSearchServiceError) as exc:
             errors.append(f"{type(exc).__name__}: {str(exc)[:200]}")
+            self.logger.warning("web_search.query.failed stance=%s query=%s reason=%s", stance, query[:120], exc)
             return []
 
-        if isinstance(raw, dict) and raw.get("error"):
-            errors.append(str(raw["error"])[:200])
+        if isinstance(raw, dict):
+            results = raw.get("results", [])
+        elif isinstance(raw, list):
+            results = raw
+        else:
+            self.logger.warning("web_search.query.invalid_response query=%s type=%s", query[:120], type(raw).__name__)
             return []
-
-        results = raw.get("results", raw if isinstance(raw, list) else [])
         normalized: list[dict[str, Any]] = []
         for item in results:
             title = item.get("title") or item.get("url") or "Untitled"
@@ -421,7 +487,7 @@ class WebSearchService:
                 normalized = published_at.replace("Z", "+00:00")
                 year = datetime.fromisoformat(normalized).year
                 return year >= current_year - 2
-            except Exception:
+            except (ValueError, TypeError):
                 year = self._parse_year(published_at)
                 if year is not None:
                     return year >= current_year - 2
