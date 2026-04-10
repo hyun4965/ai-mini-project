@@ -8,7 +8,7 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 
 - Objective : 기술 경쟁 구도와 공개 근거를 바탕으로 SK hynix의 R&D 추진 타당성과 우선순위를 판단한다.
 - Method : `Supervisor` 중심 LangGraph workflow, hybrid retrieval, bias-aware web search, evidence-based assessment, staged report drafting.
-- Tools : LangGraph, LangChain, OpenAI API, Tavily, Sentence Transformers, Matplotlib, PyPDF
+- Tools : LangGraph, LangChain, OpenAI API, Tavily, Sentence Transformers, ReportLab, PyPDF
 
 ## Features
 
@@ -64,7 +64,7 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 | Retrieval | FAISS Vector Store + Dense-first Hybrid Retrieval with lexical fallback, Hit Rate@K, MRR |
 | Embedding | `intfloat/multilingual-e5-large` |
 | Search | Tavily |
-| Output | Markdown, PDF |
+| Output | Markdown, PDF (`reportlab` renderer) |
 
 ## Retrieval Design
 
@@ -125,12 +125,19 @@ Evaluation script in this project:
 /Users/hyun/workspace/ai_mini/langgraph-v1/.venv/bin/python -m tech_strategy.retrieval_eval
 ```
 
-Current README metrics status:
+Current measured metrics (`data/eval/retrieval_eval.sample.json`, sample set size = 4):
 
-- Hit Rate@K : pending domain corpus + labeled eval set
-- MRR : pending domain corpus + labeled eval set
+- Hit@1 : `1.00`
+- Hit@3 : `1.00`
+- Hit@5 : `1.00`
+- MRR : `1.00`
 
-When the corpus is finalized, update this section with the measured values from `tech_strategy.retrieval_eval`.
+Interpretation note:
+
+- 위 수치는 현재 저장소에 포함된 소규모 샘플 평가셋 기준이다.
+- 샘플 평가셋은 제목/핵심 키워드 매칭이 비교적 명확한 질의로 구성되어 있어 `Hit@1=1.00`, `MRR=1.00`이 나올 수 있다.
+- 따라서 이 수치는 현재 구현이 샘플 셋에서는 정답 문서를 안정적으로 찾았다는 의미이며, 일반적인 도메인 검색 성능 전체를 대표한다고 보기는 어렵다.
+- 실제 제출 시 corpus와 라벨셋이 확정되면 같은 스크립트로 재측정해 갱신할 수 있다.
 
 ## Agents
 
@@ -154,6 +161,8 @@ Reason:
 - Draft 조기 종료를 막아야 한다.
 - PDF 생성 성공 여부를 Supervisor가 최종 확인해야 한다.
 
+### Workflow Orchestration
+
 ```mermaid
 flowchart TD
     U[User Query] --> S[Supervisor]
@@ -163,13 +172,48 @@ flowchart TD
     W --> S
     S --> A[Assessment Agent]
     A --> S
-    S --> D[Decision Agent]
+    S --> C[Decision Agent]
+    C --> S
+    S --> D[Draft Agent]
     D --> S
-    S --> G[Draft Agent]
-    G --> S
-    S -->|검증 OK| F[Formatting Node]
-    F -->|success/fail| S
-    S --> END[END]
+    S -->|검증 OK: request PDF| F[Formatting Node]
+    F -->|PDF 생성 결과 반환| S
+    S -->|최종 검증 완료| END[END]
+```
+
+### Component View
+
+메인 workflow 다이어그램은 제어 구조를 보여주기 위한 것이므로, Vector Store는 Supervisor 흐름 안에 직접 넣지 않고 Retrieval Agent의 하위 컴포넌트로 분리해 표현한다.
+
+```mermaid
+flowchart TD
+    U[User Query] --> S[Supervisor]
+
+    S --> R[Retrieval Agent]
+    S --> W[Web Search Agent]
+
+    R --> V[(Vector Store / Local Knowledge Base)]
+    V --> R
+
+    W --> X[(Web Search API)]
+    X --> W
+
+    R --> S
+    W --> S
+
+    S --> A[Assessment Agent]
+    A --> S
+
+    S --> C[Decision Agent]
+    C --> S
+
+    S --> D[Draft Agent]
+    D --> S
+
+    S -->|검증 OK: request PDF| F[Formatting Node]
+    F -->|PDF 생성 결과 반환| S
+
+    S -->|최종 검증 완료| END[END]
 ```
 
 ## Failure Handling
@@ -182,7 +226,7 @@ flowchart TD
 | Retrieval Agent | 후보 문서 없음, 점수 부족, 기술/경쟁사 키워드 불일치, 관련 문서 수 부족 | `retrieval.is_success=False`, `failure_reason`, `attempt`, `query_rewrite_history` | 실패 원인별 query rewrite 후 Retrieval 재실행 |
 | Web Search Agent | 최신성 부족, 출처 다양성 부족, 반증 근거 부재, 출처 신뢰도 부족, 편향 위험 과다, 경쟁사 커버리지 불균형, API 오류 | `web_search.is_success=False`, `failure_reason`, `attempt`, `query_rewrite_history` | balanced positive/counter query를 다시 구성해 Web Search 재실행 |
 | Information sufficiency gate | Retrieval/Web Search 각각은 끝났지만 전체 정보 품질 기준 미달 | `control.is_information_sufficient=False`, `coverage_status` | 부족 원인에 따라 Retrieval 또는 Web Search로 회귀 |
-| Assessment Agent | pair 누락, evidence 부족, direct evidence 부재, TRL rationale 부재, TRL 4~6 uncertainty 부재, threat rationale 부재 | `assessment.is_complete=False`, `failure_reason` | 원인에 따라 Retrieval, Web Search, Assessment 중 적절한 단계로 회귀 |
+| Assessment Agent | pair 누락, evidence 부족, TRL rationale 부재, TRL 4~6 uncertainty 부재, threat rationale 부재, 직접 근거 부족 상태에서 과도한 TRL 부여 | `assessment.is_complete=False`, `failure_reason` | 원인에 따라 Retrieval, Web Search, Assessment 중 적절한 단계로 회귀 |
 | Decision Agent | recommendation 누락, 형식 오류, rationale 부족, 근거 연결 부족, action 부재 | `decision.is_valid=False`, `failure_reason` | 형식 문제면 Decision 재실행, 근거 부족이면 Assessment로 회귀 |
 | Draft Agent | 필수 목차 누락, Decision 반영 부족, evidence linkage 부족, TRL 4~6 한계 문구 누락, list-heavy 초안 | `draft.is_valid=False`, `failure_reason`, `needs_revision=True` | Draft 재생성, 필요 시 분석형 fallback draft로 대체 |
 | Formatting Node | PDF 생성 실패, 섹션 순서 손상, 내용 손실 추정 | `output.is_pdf_generated=False`, `format_error` | Formatting 재시도, 반복 실패 시 종료 |
@@ -222,6 +266,8 @@ Recommended `.env` strategy:
 - Retrieval / search quality:
   - `TS_ENABLE_DENSE_RETRIEVAL`
   - `TS_ENABLE_VECTOR_STORE`
+  - `TS_RETRIEVAL_SCORE_THRESHOLD`
+  - `TS_MIN_RETRIEVED_DOCS`
   - `TS_EMBEDDING_LOCAL_ONLY`
   - `TS_TAVILY_MAX_RESULTS`
   - `TS_MAX_WEB_QUERIES`
@@ -229,6 +275,7 @@ Recommended `.env` strategy:
   - `TS_MIN_SOURCE_DIVERSITY`
   - `TS_MIN_RECENT_RATIO`
   - `TS_MIN_SOURCE_RELIABILITY`
+  - `TS_MAX_BIAS_RISK`
 
 Recommended values:
 
@@ -238,13 +285,18 @@ Recommended values:
   - `TS_MAX_WEB_QUERIES=2`
   - `TS_MIN_WEB_RESULTS=1`
   - `TS_MIN_SOURCE_DIVERSITY=1`
+  - `TS_MIN_RECENT_RATIO=0.0`
+  - `TS_MIN_SOURCE_RELIABILITY=0.60`
+  - `TS_MAX_BIAS_RISK=1.0`
+  - `TS_RETRIEVAL_SCORE_THRESHOLD=0.45`
+  - `TS_MIN_RETRIEVED_DOCS=2`
   - `TS_LOG_LEVEL=DEBUG`
 - Final deliverable run:
   - `TS_MAX_ITERATION=5`
-  - `TS_TAVILY_MAX_RESULTS=8`
-  - `TS_TAVILY_SEARCH_DEPTH=advanced`
-  - `TS_MAX_WEB_QUERIES=8`
-  - `TS_MIN_WEB_RESULTS=6`
+  - `TS_TAVILY_MAX_RESULTS=3`
+  - `TS_TAVILY_SEARCH_DEPTH=basic`
+  - `TS_MAX_WEB_QUERIES=4`
+  - `TS_MIN_WEB_RESULTS=3`
   - `TS_MIN_SOURCE_DIVERSITY=2`
   - `TS_MIN_RECENT_RATIO=0.4~0.5`
   - `TS_MIN_SOURCE_RELIABILITY=0.65~0.7`
@@ -322,7 +374,13 @@ Expected output files:
 - `output/ai-mini_design_3반_배석현+박나연.pdf`
 - `output/ai-mini_output_3반_배석현+박나연.pdf`
 
+## Generated Artifacts
+
+- [Final report PDF](output/ai-mini_output_3반_배석현+박나연.pdf)
+- [Final report Markdown](output/ai-mini_output_3반_배석현+박나연.md)
+
 ## Contributors
 
-배석현: Query/Input Node, Web Search Node, Assessment Node, Decision Node, and Implementation
-박나연: Retrieval Node, Draft Node, Formatting Node
+배석현: Design and Implementation of Draft Node, Formatting Node, Assessment Node, and Decision Node
+
+박나연: Design of Retrieval Node, Query/Input Node, and Web Search Node, along with research and selection of RAG-related papers

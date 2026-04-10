@@ -24,6 +24,8 @@ env/
 # Generated deliverables
 output/*
 !output/.gitkeep
+!output/ai-mini_output_3반_배석현+박나연.md
+!output/ai-mini_output_3반_배석현+박나연.pdf
 
 # OS / editor
 .DS_Store
