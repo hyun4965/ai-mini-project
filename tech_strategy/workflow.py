@@ -567,6 +567,8 @@ class TechStrategyWorkflow:
         elif not info_ok and retry_count < control["max_iteration"]:
             next_step = "web_search" if web_search.get("source_diversity", 0) < self.config.min_source_diversity or not web_search.get("has_counter_evidence") else "retrieval"
             retry_count += 1
+        elif info_ok and not state["assessment"].get("results"):
+            next_step = "assessment"
         elif not analysis_ok:
             if control.get("workflow_stage") == "assessment":
                 retry_count += 1
@@ -706,6 +708,9 @@ class TechStrategyWorkflow:
         """Assessment 품질 검증이 실패했을 때 가장 적절한 재시도 노드를 고른다."""
         retrieval = state["retrieval"]
         web_search = state["web_search"]
+        assessment = state["assessment"]
+        if not assessment.get("results"):
+            return "assessment"
         if reason in {"missing_pairs", "insufficient_evidence", "missing_direct_evidence"}:
             if len(retrieval.get("filtered_docs", [])) < self.config.min_retrieved_docs:
                 return "retrieval"
