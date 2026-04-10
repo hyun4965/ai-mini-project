@@ -18,7 +18,7 @@ HBM4, PIM, CXL 기술에 대해 경쟁사 공개 근거를 수집하고, TRL 기
 | Web Search | 최신 뉴스, 공식 발표, 반증 자료를 함께 수집하고 출처 신뢰도와 최신성을 점수화한다. |
 | Evidence Synthesis | 직접 근거와 특허, 채용, 투자, 생태계 활동 같은 간접 지표를 구분해 정리한다. |
 | Competitor Scope | 기준 기업 `SK hynix`와 비교 대상 경쟁사를 상태상에서 분리해 self-row가 Decision 평균에 섞이지 않도록 처리한다. |
-| TRL Assessment | TRL 1~9 기준으로 기술 성숙도를 평가하고, TRL 4~6은 공개 정보 기반 추정 한계를 명시한다. |
+| TRL Assessment | TRL 1-9 기준으로 기술 성숙도를 평가하고, TRL 4-6은 공개 정보 기반 추정 한계를 명시한다. |
 | Threat Assessment | 기술 성숙도, 시장 영향력, 경쟁 강도를 반영해 High / Medium / Low 위협 수준을 산정한다. |
 | Decision | Go / Hold / Monitor 권고와 High / Medium / Low 우선순위를 생성한다. |
 | Query Rewrite | 실패 원인에 따라 기술 세부 키워드, 최신성 키워드, 출처 다양성 키워드를 보강해 재검색한다. |
