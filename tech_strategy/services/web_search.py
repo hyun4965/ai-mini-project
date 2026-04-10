@@ -22,7 +22,10 @@ class WebSearchService:
             self.search_tool = None
             return
         try:
-            self.search_tool = TavilySearch(max_results=config.tavily_max_results)
+            self.search_tool = TavilySearch(
+                max_results=config.tavily_max_results,
+                search_depth=config.tavily_search_depth,
+            )
         except Exception:
             self.search_tool = None
 

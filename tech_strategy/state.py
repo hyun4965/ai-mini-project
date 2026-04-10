@@ -11,11 +11,13 @@ def merge_dict(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dic
 
 class ScopeState(TypedDict):
     """워크플로우 노드들이 공유하는 분석 기술과 경쟁사 범위."""
+    # 비교 기준이 되는 자사. 예: SK hynix
+    subject_company: str
     # 대표 분석 기술. 예: HBM4
     target_technology: str
     # 분석 대상 기술 전체 목록. 예: HBM4, PIM, CXL
     target_technologies: list[str]
-    # 비교 대상 경쟁사 목록. 예: SK hynix, Samsung, Micron
+    # 기준 기업(subject_company)과 비교할 외부 경쟁사 목록. 예: Samsung, Micron
     target_competitors: list[str]
 
 
@@ -172,6 +174,7 @@ def create_initial_state(user_query: str, max_iteration: int) -> StrategyState:
     return {
         "user_query": user_query,
         "scope": {
+            "subject_company": "",
             "target_technology": "",
             "target_technologies": [],
             "target_competitors": [],

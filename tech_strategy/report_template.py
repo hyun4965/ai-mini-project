@@ -27,7 +27,8 @@ def build_report_template(config: StrategyConfig) -> str:
 ### 1.2 분석 범위 및 기준
 
 - 분석 대상 기술: HBM, PIM, CXL
-- 분석 대상 경쟁사: 주요 메모리 및 시스템 반도체 기업
+- 기준 기업: SK hynix
+- 분석 대상 경쟁사: Samsung, Micron 등 주요 메모리 및 시스템 반도체 기업
 - 활용 데이터 범위:
   - 공개 자료 기반 (논문, 기업 발표, 기사 등)
   - 내부 정보는 포함하지 않음

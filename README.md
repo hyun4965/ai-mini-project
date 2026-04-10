@@ -1,5 +1,7 @@
 # AI Mini - Tech Strategy Decision Workflow
 
+## Abstract
+
 Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from competitor evidence, estimates TRL and threat, and generates a PDF report for R&D prioritization.
 
 ## Overview
@@ -14,6 +16,7 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 - 최신 뉴스 / 발표 / 반증 자료를 포함하는 Web Search
 - 최근 1~2년 자료 우선, 최소 2개 이상 출처, 출처 신뢰도 점수를 반영하는 Web Search
 - 직접 근거와 간접 지표를 구분하는 Evidence Synthesis
+- 기준 기업(`SK hynix`)과 비교 대상 경쟁사를 상태상에서 분리해 self-row가 Decision 평균에 섞이지 않도록 처리
 - TRL(1~9) 기반 기술 성숙도 평가
 - Threat(High / Medium / Low) 기반 경쟁 위협 평가
 - Go / Hold / Monitor + Priority(High / Medium / Low) 의사결정
@@ -53,7 +56,7 @@ Semiconductor technology strategy workflow that analyzes HBM4, PIM, and CXL from
 |---|---|
 | Framework | LangGraph, LangChain, Python |
 | LLM | `gpt-4.1-mini`, `gpt-4.1` via OpenAI API |
-| Retrieval | Hybrid Dense + Lexical |
+| Retrieval | Dense-first Hybrid Retrieval with lexical fallback, Hit Rate@K, MRR |
 | Embedding | `intfloat/multilingual-e5-large` |
 | Search | Tavily |
 | Output | Markdown, PDF |
@@ -99,6 +102,10 @@ Selection criteria:
 Final choice:
 
 - Hybrid Dense + Lexical
+- Runtime note:
+  - 기본 설정은 dense retrieval을 우선 사용한다.
+  - 임베딩 모델을 초기화할 수 없거나 로컬 캐시가 없으면 lexical fallback으로 동작한다.
+  - 따라서 `relevance_score`는 실행 시점에 dense-first hybrid 점수일 수도 있고 lexical fallback 점수일 수도 있다.
 
 ### Retrieval Evaluation
 
@@ -159,6 +166,28 @@ flowchart TD
     S --> END[END]
 ```
 
+## Failure Handling
+
+이 프로젝트는 각 Agent가 실패했을 때 직접 종료하지 않고, 실패 원인과 품질 검증 결과를 상태에 기록한 뒤 Supervisor가 재실행 또는 이전 단계 회귀를 결정한다.
+
+| Stage | Failure trigger | Stored signal | Supervisor action |
+|---|---|---|---|
+| Query interpretation | Planner LLM parsing 실패 | fallback query interpretation 사용 | 규칙 기반 기술/경쟁사 추출과 query plan으로 계속 진행 |
+| Retrieval Agent | 후보 문서 없음, 점수 부족, 기술/경쟁사 키워드 불일치, 관련 문서 수 부족 | `retrieval.is_success=False`, `failure_reason`, `attempt`, `query_rewrite_history` | 실패 원인별 query rewrite 후 Retrieval 재실행 |
+| Web Search Agent | 최신성 부족, 출처 다양성 부족, 반증 근거 부재, 출처 신뢰도 부족, 편향 위험 과다, 경쟁사 커버리지 불균형, API 오류 | `web_search.is_success=False`, `failure_reason`, `attempt`, `query_rewrite_history` | balanced positive/counter query를 다시 구성해 Web Search 재실행 |
+| Information sufficiency gate | Retrieval/Web Search 각각은 끝났지만 전체 정보 품질 기준 미달 | `control.is_information_sufficient=False`, `coverage_status` | 부족 원인에 따라 Retrieval 또는 Web Search로 회귀 |
+| Assessment Agent | pair 누락, evidence 부족, direct evidence 부재, TRL rationale 부재, TRL 4~6 uncertainty 부재, threat rationale 부재 | `assessment.is_complete=False`, `failure_reason` | 원인에 따라 Retrieval, Web Search, Assessment 중 적절한 단계로 회귀 |
+| Decision Agent | recommendation 누락, 형식 오류, rationale 부족, 근거 연결 부족, action 부재 | `decision.is_valid=False`, `failure_reason` | 형식 문제면 Decision 재실행, 근거 부족이면 Assessment로 회귀 |
+| Draft Agent | 필수 목차 누락, Decision 반영 부족, evidence linkage 부족, TRL 4~6 한계 문구 누락, list-heavy 초안 | `draft.is_valid=False`, `failure_reason`, `needs_revision=True` | Draft 재생성, 필요 시 분석형 fallback draft로 대체 |
+| Formatting Node | PDF 생성 실패, 섹션 순서 손상, 내용 손실 추정 | `output.is_pdf_generated=False`, `format_error` | Formatting 재시도, 반복 실패 시 종료 |
+
+### Retry policy
+
+- 각 단계는 `attempt` 또는 `retry_count`를 통해 재시도 횟수를 누적한다.
+- Supervisor는 실패 원인에 따라 동일 단계 재실행 또는 이전 단계 회귀를 선택한다.
+- `max_iteration`을 초과하면 `status=failed`, `next_step=END`로 종료한다.
+- 즉, 이 workflow는 선형 파이프라인이 아니라 “검증 -> 실패 원인 진단 -> 적절한 단계 재호출” 구조로 동작한다.
+
 ## Report Structure
 
 - SUMMARY
@@ -174,27 +203,29 @@ The report must explicitly state that TRL 4~6 is an estimate based on public inf
 
 ```text
 mini_project/
-├── data/
-│   ├── eval/
-│   └── knowledge_base/
-├── output/
-├── tech_strategy/
-│   ├── config.py
-│   ├── design_artifact.py
-│   ├── formatting.py
-│   ├── main.py
-│   ├── models.py
-│   ├── retrieval_eval.py
-│   ├── state.py
-│   └── workflow.py
-├── pyproject.toml
-└── README.md
+├── data/                  # PDF 문서와 Retrieval 평가 데이터
+│   ├── eval/              # Hit Rate@K, MRR 평가용 샘플
+│   └── knowledge_base/    # HBM, PIM, CXL 기반 자료
+├── output/                # PDF / Markdown 결과 저장
+├── tech_strategy/         # Agent, State, Workflow 구현 패키지
+│   ├── config.py          # 환경 변수와 실행 설정
+│   ├── design_artifact.py # 설계 산출물 생성 스크립트
+│   ├── formatting.py      # Markdown -> PDF 변환
+│   ├── main.py            # workflow 실행 스크립트
+│   ├── models.py          # 평가 결과 데이터 모델
+│   ├── retrieval_eval.py  # Retrieval 평가 스크립트
+│   ├── state.py           # LangGraph State 정의
+│   ├── state_contracts.py # Node별 State 입출력 계약
+│   ├── workflow.py        # LangGraph node와 edge 정의
+│   └── services/          # 외부 서비스 연동
+├── pyproject.toml         # Python 프로젝트 설정
+└── README.md              # 프로젝트 설명 문서
 ```
 
 ## Run
 
 Copy `.env.example` to `.env` and fill in `OPENAI_API_KEY`, `TAVILY_API_KEY`, and optionally `LANGSMITH_API_KEY`.
-For Tavily credit control during testing, keep `TS_TAVILY_MAX_RESULTS=1`, `TS_MAX_WEB_QUERIES=2`, `TS_MIN_WEB_RESULTS=1`, `TS_MIN_SOURCE_DIVERSITY=1`, and `TS_MAX_ITERATION=1`.
+For Tavily credit control during testing, keep `TS_TAVILY_MAX_RESULTS=1`, `TS_TAVILY_SEARCH_DEPTH=basic`, `TS_MAX_WEB_QUERIES=2`, `TS_MIN_WEB_RESULTS=1`, `TS_MIN_SOURCE_DIVERSITY=1`, and `TS_MAX_ITERATION=1`.
 For final-quality runs, raise those values after checking the remaining Tavily credits.
 
 Generate the design artifact:

@@ -53,6 +53,12 @@ class StrategyConfig:
     project_root: Path
     data_dir: Path
     output_dir: Path
+    subject_company: str = field(
+        default_factory=lambda: os.getenv(
+            "TS_SUBJECT_COMPANY",
+            "SK hynix",
+        )
+    )
     deliverable_label: str = field(
         default_factory=lambda: os.getenv(
             "TS_DELIVERABLE_LABEL",
@@ -72,10 +78,12 @@ class StrategyConfig:
     analysis_model: str = field(default_factory=lambda: os.getenv("TS_ANALYSIS_MODEL", "gpt-4.1"))
     draft_model: str = field(default_factory=lambda: os.getenv("TS_DRAFT_MODEL", "gpt-4.1"))
     embedding_model: str = field(default_factory=lambda: os.getenv("TS_EMBEDDING_MODEL", "intfloat/multilingual-e5-large"))
-    enable_dense_retrieval: bool = field(default_factory=lambda: os.getenv("TS_ENABLE_DENSE_RETRIEVAL", "0") in {"1", "true", "TRUE", "yes", "YES"})
+    enable_dense_retrieval: bool = field(default_factory=lambda: os.getenv("TS_ENABLE_DENSE_RETRIEVAL", "1") in {"1", "true", "TRUE", "yes", "YES"})
+    embedding_local_files_only: bool = field(default_factory=lambda: os.getenv("TS_EMBEDDING_LOCAL_ONLY", "1") in {"1", "true", "TRUE", "yes", "YES"})
     retrieval_top_k: int = field(default_factory=lambda: int(os.getenv("TS_RETRIEVAL_TOP_K", "8")))
     retrieval_score_threshold: float = field(default_factory=lambda: float(os.getenv("TS_RETRIEVAL_SCORE_THRESHOLD", "0.8")))
     tavily_max_results: int = field(default_factory=lambda: int(os.getenv("TS_TAVILY_MAX_RESULTS", "5")))
+    tavily_search_depth: str = field(default_factory=lambda: os.getenv("TS_TAVILY_SEARCH_DEPTH", "basic"))
     max_web_queries: int = field(default_factory=lambda: int(os.getenv("TS_MAX_WEB_QUERIES", "6")))
     min_retrieved_docs: int = field(default_factory=lambda: int(os.getenv("TS_MIN_RETRIEVED_DOCS", "4")))
     min_web_results: int = field(default_factory=lambda: int(os.getenv("TS_MIN_WEB_RESULTS", "6")))
