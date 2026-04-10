@@ -219,11 +219,35 @@ class WebSearchService:
         scope = state["scope"]
         technologies = scope.get("target_technologies") or ([scope["target_technology"]] if scope.get("target_technology") else [])
         competitors = scope.get("target_competitors", [])
+        subject_company = scope.get("subject_company") or self.config.subject_company
+        broad_positive = self._build_broad_positive_queries(
+            technologies=technologies,
+            competitors=competitors,
+            subject_company=subject_company,
+        )
+        broad_counter = self._build_broad_counter_queries(
+            technologies=technologies,
+            competitors=competitors,
+            subject_company=subject_company,
+        )
 
         balanced_positive: list[str] = []
         balanced_counter: list[str] = []
         for technology in technologies:
             technology_term = self._technology_query_term(technology)
+            comparison_companies = " ".join([subject_company, *competitors]).strip()
+            balanced_positive.extend(
+                [
+                    f"{technology_term} {subject_company} latest announcement roadmap sample production qualification semiconductor memory 2025 2026",
+                    f"{technology_term} {comparison_companies} comparison roadmap analyst customer qualification semiconductor memory 2025 2026",
+                ]
+            )
+            balanced_counter.extend(
+                [
+                    f"{technology_term} {subject_company} delay issue yield challenge bottleneck risk semiconductor memory 2024 2025 2026",
+                    f"{technology_term} {comparison_companies} delay limitation adoption challenge risk semiconductor memory 2024 2025 2026",
+                ]
+            )
             for competitor in competitors:
                 balanced_positive.append(
                     f"{technology_term} {competitor} official announcement roadmap sample production benchmark semiconductor memory 2025 2026"
@@ -232,8 +256,14 @@ class WebSearchService:
                     f"{technology_term} {competitor} delay issue challenge limitation yield problem semiconductor memory 2024 2025 2026"
                 )
 
-        positive_queries = self._dedupe_strings(planned_web + balanced_positive)
-        counter_queries = self._dedupe_strings(planned_counter + balanced_counter)
+        positive_queries = self._merge_query_groups(
+            [planned_web, broad_positive, balanced_positive],
+            max(1, self.config.max_web_queries // 2),
+        )
+        counter_queries = self._merge_query_groups(
+            [planned_counter, broad_counter, balanced_counter],
+            max(1, self.config.max_web_queries - max(1, self.config.max_web_queries // 2)),
+        )
         positive_limit = max(1, self.config.max_web_queries // 2)
         counter_limit = max(1, self.config.max_web_queries - positive_limit)
         positive_queries = positive_queries[:positive_limit]
@@ -274,15 +304,28 @@ class WebSearchService:
         """감지된 실패 이유에 맞춰 긍정 웹 검색 질의를 확장한다."""
         technologies = interpretation.get("target_technologies", [])
         competitors = interpretation.get("target_competitors", [])
+        subject_company = interpretation.get("subject_company") or self.config.subject_company
         existing = list(interpretation.get("web_queries", []))
         rewritten: list[str] = []
 
+        rewritten.extend(
+            self._build_broad_positive_queries(
+                technologies=technologies,
+                competitors=competitors,
+                subject_company=subject_company,
+            )
+        )
+
         for technology in technologies:
             technology_term = self._technology_query_term(technology)
+            comparison_companies = " ".join([subject_company, *competitors]).strip()
             for competitor in competitors:
                 if reason == "stale_results":
                     rewritten.append(
                         f"{technology_term} {competitor} 2025 2026 latest announcement press release roadmap news semiconductor memory"
+                    )
+                    rewritten.append(
+                        f"{technology_term} {subject_company} 2025 2026 latest press release customer qualification roadmap semiconductor memory"
                     )
                 elif reason == "low_source_diversity":
                     rewritten.extend(
@@ -290,6 +333,7 @@ class WebSearchService:
                             f"{technology_term} {competitor} official site press release 2025",
                             f"{technology_term} {competitor} news analysis report 2025 semiconductor memory",
                             f"{technology_term} {competitor} conference presentation 2025",
+                            f"{technology_term} {subject_company} analyst report Reuters TrendForce 2025 2026 semiconductor memory",
                         ]
                     )
                 elif reason == "low_source_reliability":
@@ -297,15 +341,22 @@ class WebSearchService:
                         [
                             f"{technology_term} {competitor} official announcement",
                             f"{technology_term} {competitor} IEEE JEDEC conference semiconductor memory",
+                            f"{technology_term} {subject_company} official announcement JEDEC conference semiconductor memory",
                         ]
                     )
                 elif reason == "imbalanced_company_coverage":
-                    rewritten.append(
-                        f"{technology_term} {competitor} roadmap sample production benchmark 2025 2026 semiconductor memory"
+                    rewritten.extend(
+                        [
+                            f"{technology_term} {competitor} roadmap sample production benchmark 2025 2026 semiconductor memory",
+                            f"{technology_term} {comparison_companies} comparison roadmap benchmark 2025 2026 semiconductor memory",
+                        ]
                     )
                 else:
-                    rewritten.append(
-                        f"{technology_term} {competitor} latest announcement production roadmap 2025 2026 semiconductor memory"
+                    rewritten.extend(
+                        [
+                            f"{technology_term} {competitor} latest announcement production roadmap 2025 2026 semiconductor memory",
+                            f"{technology_term} {subject_company} latest announcement production roadmap 2025 2026 semiconductor memory",
+                        ]
                     )
 
         return self._dedupe_strings(existing + rewritten)
@@ -319,22 +370,37 @@ class WebSearchService:
         """커버리지나 편향 검증이 실패했을 때 반증 질의를 확장한다."""
         technologies = interpretation.get("target_technologies", [])
         competitors = interpretation.get("target_competitors", [])
+        subject_company = interpretation.get("subject_company") or self.config.subject_company
         existing = list(interpretation.get("counter_queries", []))
         rewritten: list[str] = []
 
+        rewritten.extend(
+            self._build_broad_counter_queries(
+                technologies=technologies,
+                competitors=competitors,
+                subject_company=subject_company,
+            )
+        )
+
         for technology in technologies:
             technology_term = self._technology_query_term(technology)
+            comparison_companies = " ".join([subject_company, *competitors]).strip()
             for competitor in competitors:
                 if reason in {"missing_counter_evidence", "high_bias_risk"}:
                     rewritten.extend(
                         [
                             f"{technology_term} {competitor} delay issue challenge limitation yield problem semiconductor memory 2024 2025 2026",
                             f"{technology_term} {competitor} risk bottleneck failure concern adoption issue semiconductor memory",
+                            f"{technology_term} {subject_company} delay yield challenge customer qualification risk semiconductor memory 2024 2025 2026",
+                            f"{technology_term} {comparison_companies} limitation issue adoption setback risk semiconductor memory 2024 2025 2026",
                         ]
                     )
                 else:
-                    rewritten.append(
-                        f"{technology_term} {competitor} limitation delay issue challenge semiconductor memory"
+                    rewritten.extend(
+                        [
+                            f"{technology_term} {competitor} limitation delay issue challenge semiconductor memory",
+                            f"{technology_term} {subject_company} limitation delay issue challenge semiconductor memory",
+                        ]
                     )
 
         return self._dedupe_strings(existing + rewritten)
@@ -419,6 +485,7 @@ class WebSearchService:
         scope = state["scope"]
         technologies = scope.get("target_technologies") or ([scope["target_technology"]] if scope.get("target_technology") else [])
         competitors = scope.get("target_competitors", [])
+        subject_company = scope.get("subject_company") or self.config.subject_company
         haystack = " ".join(
             [
                 item.get("title", ""),
@@ -430,7 +497,9 @@ class WebSearchService:
         ).lower()
         technology_match = any(self._contains_alias(haystack, self._technology_aliases(technology)) for technology in technologies)
         competitor_match = any(self._contains_alias(haystack, self._competitor_aliases(competitor)) for competitor in competitors)
-        return technology_match and competitor_match
+        subject_match = self._contains_alias(haystack, self._competitor_aliases(subject_company))
+        high_signal_non_company = item.get("source_reliability_tier") in {"standards", "academic", "ecosystem"}
+        return technology_match and (competitor_match or subject_match or high_signal_non_company)
 
     def _score_source_reliability(self, url: str | None, source: str) -> tuple[str, float]:
         """출처 도메인을 기준으로 신뢰도 등급과 점수를 부여한다."""
@@ -530,6 +599,70 @@ class WebSearchService:
             return False
         covered = [name for name, count in coverage.items() if count > 0]
         return len(covered) >= min(2, len(competitors))
+
+    def _build_broad_positive_queries(
+        self,
+        *,
+        technologies: list[str],
+        competitors: list[str],
+        subject_company: str,
+    ) -> list[str]:
+        """기술 전반과 비교 관점을 동시에 담는 폭넓은 긍정 검색 질의를 만든다."""
+        tech_blob = self._technology_blob(technologies)
+        company_blob = " ".join([subject_company, *competitors]).strip()
+        return self._dedupe_strings(
+            [
+                f"{tech_blob} {company_blob} latest announcement roadmap press release semiconductor memory 2025 2026",
+                f"{tech_blob} {company_blob} comparison analyst report datacenter ai memory 2025 2026",
+            ]
+        )
+
+    def _build_broad_counter_queries(
+        self,
+        *,
+        technologies: list[str],
+        competitors: list[str],
+        subject_company: str,
+    ) -> list[str]:
+        """기술 전반의 일정 지연과 리스크를 찾는 폭넓은 반증 질의를 만든다."""
+        tech_blob = self._technology_blob(technologies)
+        company_blob = " ".join([subject_company, *competitors]).strip()
+        return self._dedupe_strings(
+            [
+                f"{tech_blob} {company_blob} delay issue yield limitation bottleneck risk semiconductor memory 2024 2025 2026",
+                f"{tech_blob} {company_blob} challenge adoption setback concern qualification semiconductor memory 2024 2025 2026",
+            ]
+        )
+
+    def _merge_query_groups(self, groups: list[list[str]], limit: int) -> list[str]:
+        """각 질의 그룹을 라운드로빈으로 섞어 작은 쿼리 예산에서도 다양성을 확보한다."""
+        normalized = [self._dedupe_strings(group) for group in groups if group]
+        selected: list[str] = []
+        if limit <= 0:
+            return selected
+
+        group_index = 0
+        while normalized and len(selected) < limit:
+            if group_index >= len(normalized):
+                group_index = 0
+            group = normalized[group_index]
+            if group:
+                candidate = group.pop(0)
+                if candidate not in selected:
+                    selected.append(candidate)
+            if group:
+                group_index += 1
+            else:
+                normalized.pop(group_index)
+        return selected
+
+    def _technology_blob(self, technologies: list[str]) -> str:
+        """다기술 검색을 위한 짧은 기술 키워드 묶음을 만든다."""
+        keywords: list[str] = []
+        for technology in technologies:
+            keywords.extend(self._technology_aliases(technology)[:2])
+        cleaned = self._dedupe_strings(keywords)
+        return " ".join(cleaned) if cleaned else "semiconductor memory"
 
     @staticmethod
     def _compute_freshness_score(results: list[dict[str, Any]]) -> float:
