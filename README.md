@@ -194,7 +194,8 @@ mini_project/
 ## Run
 
 Copy `.env.example` to `.env` and fill in `OPENAI_API_KEY`, `TAVILY_API_KEY`, and optionally `LANGSMITH_API_KEY`.
-For Tavily credit control during testing, keep `TS_TAVILY_MAX_RESULTS=3`, `TS_MAX_WEB_QUERIES=6`, and `TS_MAX_ITERATION=3`.
+For Tavily credit control during testing, keep `TS_TAVILY_MAX_RESULTS=1`, `TS_MAX_WEB_QUERIES=2`, `TS_MIN_WEB_RESULTS=1`, `TS_MIN_SOURCE_DIVERSITY=1`, and `TS_MAX_ITERATION=1`.
+For final-quality runs, raise those values after checking the remaining Tavily credits.
 
 Generate the design artifact:
 
