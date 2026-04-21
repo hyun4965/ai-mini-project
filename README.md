@@ -208,6 +208,6 @@ mini_project/
 
 ## Contributors
 
-배석현: Design and Implementation of Draft Node, Formatting Node, Assessment Node, and Decision Node
+배석현: Design and Implementation of Draft Node, Formatting Node, Assessment Node, and Decision Node, Server Eng
 
 박나연: Design of Retrieval Node, Query/Input Node, and Web Search Node, along with research and selection of RAG-related papers
